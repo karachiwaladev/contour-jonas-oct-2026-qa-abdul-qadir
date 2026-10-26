@@ -31,6 +31,7 @@ Plain HTML, CSS and JavaScript. No build step and no dependencies.
 | `app.js` | IndexedDB storage (`taskStore`), task helpers, UI rendering |
 | `tests/checks.js` | Browser checks (see Verify) |
 | `tests/demo-setup.js` | Seeds demo tasks for screenshots |
+| `tests/acceptance/ticket-<T>.json` | Each ticket ask (quoted) → the checks that prove it, for the verification audit |
 | `screenshots/` | Verification screenshots attached to tickets |
 
 ## Run
@@ -46,6 +47,15 @@ Run these from the repo root. They use headless Chrome through the DevTools Prot
 node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --test todo/tests/checks.js
 node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --setup todo/tests/demo-setup.js --screenshot todo/screenshots/<name>.png --width 760 --height 900
 ```
+
+To prove each ticket's asks are covered, run the verification audit. Use issue #4, #5 or #7:
+
+```
+node .claude/skills/factory-loop/scripts/verify-audit.js --issue 7 --project todo
+```
+
+It maps each ticket's words to checks through `tests/acceptance/ticket-<T>.json`, reruns the
+checks fresh, and checks the screenshots. Add `--pr <PR>` to audit a pull request's head commit.
 
 `tests/checks.js` has 68 checks covering every feature above. It also tests edge cases:
 HTML in titles and tags, blank input, the empty and no-match states, persistence of

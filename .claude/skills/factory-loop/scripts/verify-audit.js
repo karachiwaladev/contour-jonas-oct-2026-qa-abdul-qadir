@@ -13,7 +13,7 @@
 //    nothing logs a console error. Earlier runs and the PR's own claims are never trusted.
 // 3. Evidence: ticket-<T>-*.png screenshots are real PNGs. With --pr, the PR says Closes #N, embeds
 //    those screenshots pinned to a commit that contains them, and its check count is compared.
-// With --pr the audit runs on the PR's head commit in a temporary git worktree, so the working tree
+// With --pr the audit runs on the PR's head commit, exported to a temp folder, so the working tree
 // is never touched. Exit 0 = VERIFIED, 1 = NOT VERIFIED, 2 = the audit couldn't run.
 
 const { spawnSync } = require("child_process");
@@ -53,13 +53,17 @@ const loadTicket = (args) => args["ticket-file"]
   ? JSON.parse(fs.readFileSync(args["ticket-file"], "utf8"))
   : JSON.parse(gh(["api", `repos/{owner}/{repo}/issues/${args.issue}`]));
 
-// Checks out the PR head in a throwaway worktree; cleanup removes only that worktree.
-function checkoutPr(pr, repoRoot) {
+// Exports the project folder at the PR head into a throwaway temp dir with `git archive`. Nothing is
+// written to .git (worktree metadata can't be pruned when the repo sits in a OneDrive folder).
+function checkoutPr(pr, repoRoot, project) {
   const info = JSON.parse(gh(["pr", "view", String(pr), "--json", "number,body,headRefOid,state"]));
   git(["fetch", "--quiet", "origin", `pull/${info.number}/head`], repoRoot);
-  const dir = path.join(os.tmpdir(), `va-${process.pid}-${Date.now()}`);
-  git(["worktree", "add", "--detach", "--quiet", dir, info.headRefOid], repoRoot);
-  return { ...info, dir, cleanup: () => exec("git", ["worktree", "remove", "--force", dir], { cwd: repoRoot }) };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "va-"));
+  const tar = path.join(dir, "head.tar");
+  git(["archive", "--format=tar", "-o", tar, info.headRefOid, "--", project], repoRoot);
+  const x = exec("tar", ["-xf", tar, "-C", dir]);
+  if (x.status !== 0) throw new AuditError(`couldn't unpack the PR head: ${(x.stderr || "").trim()}`);
+  return { ...info, dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) };
 }
 
 function runBrowser(projectDir) {
@@ -148,7 +152,7 @@ function audit(args) {
   const T = (String(ticket.title).match(/Ticket\s*#(\d+)/i) || [])[1];
   if (!T) throw new AuditError(`issue #${args.issue} has no "Ticket #<T>" in its title`);
   const repoRoot = git(["rev-parse", "--show-toplevel"]).trim();
-  const pr = args.pr ? checkoutPr(args.pr, repoRoot) : null;
+  const pr = args.pr ? checkoutPr(args.pr, repoRoot, args.project) : null;
   const root = pr ? pr.dir : repoRoot;
   const f = { T, issue: args.issue, project: args.project, ref: pr ? `PR #${pr.number} @ ${pr.headRefOid.slice(0, 7)}` : "working tree", blockers: [], notes: [] };
   try {

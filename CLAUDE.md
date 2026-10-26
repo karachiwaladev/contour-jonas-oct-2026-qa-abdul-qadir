@@ -62,6 +62,7 @@ comments on the issue → waits for manual review before merging. Never destruct
 |------|------|---------|
 | factory-loop | [.claude/skills/factory-loop/SKILL.md](.claude/skills/factory-loop/SKILL.md) | Claim, clarify, plan, build, verify and answer GitHub issues |
 | browser-verify | [.claude/skills/factory-loop/scripts/browser-verify.js](.claude/skills/factory-loop/scripts/browser-verify.js) | Headless Chrome checks + screenshots |
+| verify-audit | [.claude/skills/factory-loop/scripts/verify-audit.js](.claude/skills/factory-loop/scripts/verify-audit.js) | Did we verify what the ticket asked? Maps each ask (`<project>/tests/acceptance/ticket-<T>.json`) to checks, reruns Chrome on the PR head; blocks the merge unless VERIFIED |
 | factory-code-review | [.claude/skills/factory-code-review/SKILL.md](.claude/skills/factory-code-review/SKILL.md) | Pre-PR review vs ticket/plan: correctness, conventions, tests, docs |
 | factory-security-review | [.claude/skills/factory-security-review/SKILL.md](.claude/skills/factory-security-review/SKILL.md) | Pre-PR secret/XSS/injection scan (`scripts/scan.js`) + threat review |
 | Stop hooks | [.claude/settings.json](.claude/settings.json) | Log prompts to `.claude/logs/prompts.jsonl`; auto commit, push only if the security scan passes |

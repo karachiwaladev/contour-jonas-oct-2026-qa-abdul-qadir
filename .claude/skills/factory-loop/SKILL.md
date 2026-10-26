@@ -1,6 +1,6 @@
 ---
 name: factory-loop
-description: Work through the open GitHub issues in this repo like a ticket factory. Claim each new issue with 👀, then either answer it (question tickets) or do the work (build tickets). Build tickets get clarifying questions, a plan for approval, the build on a ticket branch, verification in Chrome via the DevTools Protocol with screenshots, a code review and a security review (factory-code-review and factory-security-review skills), and a pull request. The ticket only closes after the PR has been manually reviewed and approved. Also follows up on PRs awaiting review. Use this whenever the user asks to pick up, triage, answer, work on, build or "process" GitHub issues or tickets, says "check the repo for new tickets", or runs it on a recurring /loop, even if they don't name factory-loop.
+description: Work through the open GitHub issues in this repo like a ticket factory. Claim each new issue with 👀, then either answer it (question tickets) or do the work (build tickets). Build tickets get clarifying questions, a plan for approval, the build on a ticket branch, verification in Chrome via the DevTools Protocol with screenshots, a verification audit that proves every ticket ask was tested (and blocks the merge if not), a code review and a security review (factory-code-review and factory-security-review skills), and a pull request. The ticket only closes after the PR has been manually reviewed and approved. Also follows up on PRs awaiting review. Use this whenever the user asks to pick up, triage, answer, work on, build or "process" GitHub issues or tickets, says "check the repo for new tickets", or runs it on a recurring /loop, even if they don't name factory-loop.
 ---
 
 # factory-loop
@@ -101,8 +101,10 @@ use (the ticket's wording wins), tech and storage choices, UI expectations, and 
 
 Present a short plan that covers the folder and files, the tech, the features (mapped to
 the ticket's asks), how you'll verify each one in the browser, the screenshots you'll take,
-the branch, the code and security reviews (W6–W7), the PR, and what you'll comment. Wait
-for approval. Approval of the plan covers the build, commits, push, PR and results comment
+the branch, the code and security reviews (W6–W7), the PR, and what you'll comment. Include
+the **acceptance criteria**: each ask quoted word for word from the ticket, each decision from
+W1, and the checks that will prove each one. They become the acceptance file that the W4
+audit checks. Wait for approval. Approval of the plan covers the build, commits, push, PR and results comment
 it describes. Anything outside the plan needs a new OK.
 
 ### W3. Branch, then build
@@ -156,6 +158,35 @@ node .claude/skills/factory-loop/scripts/browser-verify.js --dir <project> --set
 
 Fix anything that fails and rerun until everything passes. Never report a result you didn't see.
 
+**Then run the verification audit.** It answers "did we really verify what the ticket asked
+for?" and is the gate for everything after this step:
+
+```
+node .claude/skills/factory-loop/scripts/verify-audit.js --issue <N> --project <project>
+```
+
+It reads `<project>/tests/acceptance/ticket-<T>.json`, which you write from the approved plan:
+
+```json
+{ "criteria": [
+    { "id": "AC1", "quote": "<words copied from the ticket>", "checks": ["<exact check name>"] },
+    { "id": "AC2", "source": "clarified", "requirement": "<a decision from W1>", "checks": ["..."] },
+    { "id": "AC3", "quote": "Everything should work on client side", "files": ["index.html"], "absent": "fetch\\(" } ],
+  "context": [ { "quote": "Enhance my todo app", "reason": "names the project; not an ask" } ] }
+```
+
+It fails (exit 1, NOT VERIFIED) if:
+- a quote isn't in the ticket, which means an invented ask;
+- a meaningful ticket word isn't covered by any quote, which means a dropped ask;
+- a mapped check failed or never ran in a **fresh** Chrome run;
+- anything logged a console error;
+- there's no real `ticket-<T>-*.png` screenshot.
+
+Exit 2 means the audit couldn't run (no Chrome or no `gh`). Fix that, and never treat it as a
+pass. Don't move on until it says **VERIFIED**. Use `context` only for ticket text that truly
+isn't an ask, because reviewers see every entry. Commit the acceptance file with the project.
+The rules are unit-tested: `node --test .claude/skills/factory-loop/scripts/audit-lib.test.js`.
+
 ### W5. Commit (don't push yet)
 
 Commit on the ticket branch with a message naming the ticket (`Ticket #4: Filters, due dates
@@ -206,6 +237,7 @@ Closes #<N>
 **What changed:** <bullets mapped to the ticket's asks, with file links>
 **How to run:** <one line>
 **Verification (Chrome, DevTools Protocol):** <N/N checks passed: short list>
+**Verification audit:** <✅ VERIFIED, k/k ticket asks covered>; full report in the comments
 **Code review:** <one-line result, e.g. ✅ 0 open, 2 majors fixed>; full report in the comments
 **Security review:** <one-line result, e.g. ✅ no blocking issues, scanner clean>; full report in the comments
 
@@ -215,7 +247,11 @@ Closes #<N>
 **Awaiting manual review.** This PR won't be merged, and #<N> won't close, until it's reviewed and approved.
 ```
 
-Then post the two full reports as PR comments (`gh pr comment <PR> --body-file <file>`).
+Then post the two full reports as PR comments (`gh pr comment <PR> --body-file <file>`). Rerun
+the verification audit against the PR itself, with
+`--pr <PR> --out <scratchpad>/audit-<branch>.md`, which audits the pushed head commit and the PR
+body's evidence. Post that report as a third comment. If it isn't VERIFIED, fix the PR before
+asking for review.
 
 Embed screenshots by **commit SHA**, not branch name, so the images still load after the
 merge. GitHub's API can't upload images directly, so screenshots are committed and linked.
@@ -237,7 +273,7 @@ Switch back with `git switch main` so the next ticket and the prompt log start f
 earlier. The work is waiting for manual review, and Step R picks it up from here.
 
 End with one line per issue, for example:
-`#5 "Ticket #4: Filters": 👀 · branch ticket-4-filters · 40/40 checks · code review ✅ · security ✅ · PR #6 opened · awaiting review`.
+`#5 "Ticket #4: Filters": 👀 · branch ticket-4-filters · 40/40 checks · audit ✅ VERIFIED · code review ✅ · security ✅ · PR #6 opened · awaiting review`.
 Name any step that is blocked, and say what's blocking it.
 
 ## Step R: PRs awaiting review
@@ -260,6 +296,17 @@ The PR is *approved* if at least one reviewer's latest state is `APPROVED` and n
 
 - **Approved**: approved as above, or the user explicitly approved this PR in chat.
   Only then:
+  0. **Verification gate (ticket PRs).** Run
+     `node .claude/skills/factory-loop/scripts/verify-audit.js --issue <N> --project <project> --pr <PR> --out <scratchpad>/audit-<PR>.md`.
+     It audits the PR's head commit, not your checkout.
+     - Exit 0: carry on and merge.
+     - Exit 1: **don't merge, even though it's approved.** Post the report as a PR comment, tell
+       the user which asks aren't verified, and handle it like changes requested.
+     - Exit 2: don't merge. Say what stopped the audit.
+
+     Only an explicit chat instruction such as "merge PR #N without verification" overrides
+     this, and the issue comment then says it was merged unverified. Factory PRs, which aren't
+     on `ticket-*` branches, skip this step.
   1. Merge with `gh pr merge <PR> --merge` (no squash or rebase, and don't delete the branch).
   2. Run `git switch main && git pull --ff-only`.
   3. Confirm the issue closed (`Closes #N` should have done it). If it's still open, close
