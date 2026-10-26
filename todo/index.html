@@ -11,13 +11,34 @@
     <h1>Todo</h1>
 
     <form id="new-task-form" class="new-task" autocomplete="off">
-      <label for="new-task-title" class="visually-hidden">New task</label>
-      <input id="new-task-title" name="title" type="text" placeholder="What needs doing?" maxlength="200" required>
-      <button type="submit">Add</button>
+      <div class="new-task-row">
+        <label for="new-task-title" class="visually-hidden">New task</label>
+        <input id="new-task-title" name="title" type="text" placeholder="What needs doing?" maxlength="200" required>
+        <button type="submit">Add</button>
+      </div>
+      <div class="new-task-row extras">
+        <label class="field">
+          <span>Due</span>
+          <input id="new-task-due" name="due" type="date">
+        </label>
+        <label class="field grow">
+          <span>Tags</span>
+          <input id="new-task-tags" name="tags" type="text" placeholder="work, urgent" maxlength="200">
+        </label>
+      </div>
     </form>
 
+    <section class="filters" aria-label="Filters">
+      <div id="status-filter" class="segmented" role="group" aria-label="Show">
+        <button type="button" data-status="all" aria-pressed="true">All</button>
+        <button type="button" data-status="active" aria-pressed="false">Incomplete</button>
+        <button type="button" data-status="done" aria-pressed="false">Completed</button>
+      </div>
+      <div id="tag-filter" class="tag-filter" role="group" aria-label="Filter by tag"></div>
+    </section>
+
     <ul id="task-list" class="task-list" aria-live="polite"></ul>
-    <p id="empty-state" class="empty-state" hidden>No tasks yet. Add one above.</p>
+    <p id="empty-state" class="empty-state" hidden></p>
     <p id="summary" class="summary"></p>
     <p id="error" class="error" role="alert" hidden></p>
   </main>

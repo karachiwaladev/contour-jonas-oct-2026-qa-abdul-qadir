@@ -66,4 +66,4 @@ gets approval → builds → verifies in Chrome (DevTools Protocol) with screens
 
 | Project | Path | Ticket | Summary |
 |---------|------|--------|---------|
-| todo | [todo/](todo/CLAUDE.md) | #3 (issue #4) | Todo app; tasks stored client-side in IndexedDB |
+| todo | [todo/](todo/CLAUDE.md) | #3, #4 (issues #4, #5) | Todo app with due dates, tags and filters; IndexedDB storage |

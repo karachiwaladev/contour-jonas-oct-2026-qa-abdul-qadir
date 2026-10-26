@@ -1,22 +1,26 @@
 // Seeds demo tasks for screenshots. Run with:
 //   node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --setup todo/tests/demo-setup.js --screenshot <out.png>
+// Set window.DEMO_TAG / window.DEMO_STATUS before running (or edit below) to screenshot a filtered view.
 
-const items = () => [...document.querySelectorAll("#task-list .task")];
-const waitFor = async (cond) => {
-  for (let i = 0; i < 250 && !cond(); i++) await new Promise((r) => setTimeout(r, 20));
+const shift = (days) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
 await ready;
 for (const task of await taskStore.all(db)) await taskStore.remove(db, task.id);
-await render();
 
-for (const title of ["Read Ticket #3", "Build the todo app", "Verify it in Chrome", "Push to GitHub"]) {
-  const count = items().length;
-  input.value = title;
-  form.requestSubmit();
-  await waitFor(() => items().length === count + 1);
+const demo = [
+  { title: "Submit expense report", dueDate: shift(-1), tags: ["work", "finance"] },
+  { title: "Prepare sprint demo", dueDate: shift(0), tags: ["work"] },
+  { title: "Book dentist appointment", dueDate: shift(3), tags: ["health"] },
+  { title: "Review pull request #42", dueDate: shift(1), tags: ["work", "code"], done: true },
+  { title: "Buy groceries", dueDate: null, tags: ["home"] },
+];
+for (const [i, t] of demo.entries()) {
+  await taskStore.update(db, { title: t.title, done: !!t.done, dueDate: t.dueDate, tags: t.tags, createdAt: Date.now() + i });
 }
-for (const i of [0, 1, 2]) {
-  items()[i].querySelector("input[type=checkbox]").click();
-  await waitFor(() => items()[i].classList.contains("done"));
-}
+
+Object.assign(view, { status: window.DEMO_STATUS || "all", tag: window.DEMO_TAG || null, editingId: null });
+await render();
