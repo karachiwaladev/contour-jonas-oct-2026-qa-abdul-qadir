@@ -1,6 +1,6 @@
 ---
 name: factory-loop
-description: Work through the open GitHub issues in this repo like a ticket factory. Claim each new issue with 👀, then either answer it (question tickets) or do the work (build tickets). Build tickets get clarifying questions, a plan for approval, the build, verification in Chrome via the DevTools Protocol with screenshots, a commit and push, and a results comment on the issue. Use this whenever the user asks to pick up, triage, answer, work on, build or "process" GitHub issues or tickets, says "check the repo for new tickets", or runs it on a recurring /loop, even if they don't name factory-loop.
+description: Work through the open GitHub issues in this repo like a ticket factory. Claim each new issue with 👀, then either answer it (question tickets) or do the work (build tickets). Build tickets get clarifying questions, a plan for approval, the build on a ticket branch, verification in Chrome via the DevTools Protocol with screenshots, and a pull request. The ticket only closes after the PR has been manually reviewed and approved. Also follows up on PRs awaiting review. Use this whenever the user asks to pick up, triage, answer, work on, build or "process" GitHub issues or tickets, says "check the repo for new tickets", or runs it on a recurring /loop, even if they don't name factory-loop.
 ---
 
 # factory-loop
@@ -11,11 +11,12 @@ goes down one of two tracks:
 - **Question ticket** (asks for information) → draft an answer → user approves → post → close.
 - **Work ticket** (asks for files, a project, a feature or a change) → **clarify → plan →
   approval → branch → build → verify in Chrome with screenshots → push → pull request →
-  comment**. The issue closes when the PR is merged.
+  comment → wait for manual review & approval → merge**. Merging closes the ticket.
 
 The user approves anything that goes out under their name. They also approve the plan
 before any building starts, because building on wrong assumptions wastes far more time than
-a question does.
+a question does. The PR is the last gate. A human reviews it, and the work isn't merged
+and the ticket isn't closed until that review approves it.
 
 ## Guardrails: never destructive
 
@@ -48,9 +49,11 @@ gh api "repos/{owner}/{repo}/issues/<N>/reactions?content=eyes" --jq '.[].user.l
 ```
 
 An issue is **new** if your login isn't among its 👀 reactors. Keep string literals out of
-`--jq` filters, because PowerShell 5.1 strips embedded double quotes. If nothing is new, say
-so in one line and stop. On a `/loop` tick, also don't repeat questions you're already
-waiting on.
+`--jq` filters, because PowerShell 5.1 strips embedded double quotes. On a `/loop` tick,
+don't repeat questions you're already waiting on.
+
+Then run **Step R** (PRs awaiting review). If there are no new issues and no PR has
+changed state, say so in one line and stop.
 
 ## Step 2: Claim with 👀
 
@@ -172,35 +175,71 @@ Closes #<N>
 
 Embed screenshots by **commit SHA**, not branch name, so the images still load after the
 merge. GitHub's API can't upload images directly, so screenshots are committed and linked.
-`Closes #<N>` closes the issue automatically when the PR merges.
+`Closes #<N>` closes the issue automatically, but only when the PR is merged after approval.
+End the body with a line saying the PR is awaiting manual review, and ask the user who
+should review it. If they name someone, add them with `gh pr edit <PR> --add-reviewer <login>`.
 
 ### W7. Comment on the issue
 
 Post a short comment on the issue (`gh issue comment <N> --body-file <file>`) with the PR
 link, the check results and the same embedded screenshots, so the ticket itself shows
-the work.
+the work. Say that the ticket stays open until the PR has been reviewed and approved.
 
-### W8. Hand back, then report
+### W8. Hand back and wait for review
 
 Switch back with `git switch main` so the next ticket and the prompt log start from `main`.
-Don't merge the PR yourself unless the user asks. When they do, use
-`gh pr merge <PR> --merge` (no squash/rebase, and don't delete the branch), then
-`git pull --ff-only` on `main`. Note that the workshop scores what's on `main`, so
-unmerged PRs don't count yet; mention this when you report.
+**Don't merge the PR and don't close the issue yet**, even if the user asked you to close it
+earlier. The work is waiting for manual review, and Step R picks it up from here.
 
 End with one line per issue, for example:
-`#5 "Filters": 👀 · branch ticket-4-filters · 40/40 checks · PR #6 opened · commented`.
+`#5 "Filters": 👀 · branch ticket-4-filters · 40/40 checks · PR #6 opened · awaiting review`.
 Name any step that is blocked, and say what's blocking it.
 
-### Closing without a PR
+## Step R: PRs awaiting review
 
-Question tickets, and anything the user explicitly says to close, close directly with
-`gh issue close <N> --reason completed`. Then confirm with
+Run this on every invocation, including loop ticks, after Step 1. List open ticket PRs with
+`gh pr list --state open --json number,title,headRefName,reviewDecision,url --jq '.[] | [.number, .headRefName, .reviewDecision, .title] | @tsv'`
+and handle each one according to its review state:
+
+- **Approved**: `reviewDecision` is `APPROVED`, or the user explicitly approved this PR in
+  chat. Only then:
+  1. Merge with `gh pr merge <PR> --merge` (no squash or rebase, and don't delete the branch).
+  2. Run `git switch main && git pull --ff-only`.
+  3. Confirm the issue closed (`Closes #N` should have done it). If it's still open, close
+     it with `gh issue close <N> --reason completed`.
+  4. Comment on the issue: merged in PR #X after review by `<reviewer>`.
+
+  Report it in one line.
+- **Changes requested** (`CHANGES_REQUESTED`): read the feedback with
+  `gh api "repos/{owner}/{repo}/pulls/<PR>/reviews"` and `.../pulls/<PR>/comments`.
+  Summarize it for the user and propose the fixes. After they OK it, do the following on the
+  ticket branch: switch to it, make the fixes, rerun W4, push, and reply on the PR with what
+  changed. The PR then goes back to waiting for review. Never merge on a changes-requested
+  review.
+- **Still waiting** (`REVIEW_REQUIRED` or empty): do nothing. Mention it only in the one-line
+  status, e.g. `PR #6 awaiting review`.
+- **Merged by someone else**: run `git switch main && git pull --ff-only`, confirm the issue is
+  closed, and report it.
+- **Closed without merging**: tell the user, and leave the issue open. That's their call.
+
+GitHub doesn't let you approve your own PR. If the user is the PR's author and no one else
+can review, ask them to review it on GitHub and confirm in chat ("PR #6 approved"). Their
+explicit chat approval then counts as the manual approval. Never treat your own checks,
+CI results or a PR comment from anyone else as approval.
+
+## Closing without a PR
+
+Question tickets close directly with `gh issue close <N> --reason completed` once the
+approved answer is posted. Work tickets never close this way while their PR is open or
+unapproved. Confirm with
 `gh api "repos/{owner}/{repo}/issues/<N>" --jq '{state, state_reason}'`. If it fails on
 permissions, don't retry. Say the issue is still open and who can close it.
 
 ## Running on a schedule
 
-`/loop 1m /factory-loop`. Most ticks find nothing new, so report that in one short line.
-A tick that finds a new ticket claims it and starts W1 or the question draft, then waits
-for the user's answers and approval. Every approval gate still applies on a loop.
+`/loop 1m /factory-loop`. Every tick does two things: it looks for new tickets (Step 1) and
+it checks PRs awaiting review (Step R). Most ticks find nothing new, so report that in one
+short line, such as `No new issues · PR #6 awaiting review`. A tick that finds a new ticket
+claims it and starts W1 or the question draft, then waits for the user's answers and
+approval. A tick that finds an approved PR merges it and closes the ticket. Every approval
+gate still applies on a loop.
