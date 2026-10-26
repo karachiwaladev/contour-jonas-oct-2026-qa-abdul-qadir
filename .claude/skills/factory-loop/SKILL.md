@@ -168,24 +168,42 @@ node .claude/skills/factory-loop/scripts/verify-audit.js --issue <N> --project <
 It reads `<project>/tests/acceptance/ticket-<T>.json`, which you write from the approved plan:
 
 ```json
-{ "criteria": [
-    { "id": "AC1", "quote": "<words copied from the ticket>", "checks": ["<exact check name>"] },
-    { "id": "AC2", "source": "clarified", "requirement": "<a decision from W1>", "checks": ["..."] },
-    { "id": "AC3", "quote": "Everything should work on client side", "files": ["index.html"], "absent": "fetch\\(" } ],
+{ "ticket": 5, "issue": 7,
+  "criteria": [
+    { "id": "AC1", "quote": "<one ask, copied from the ticket>", "checks": ["<exact check name>"],
+      "mutation": "taskStore.remove = async () => {};" },
+    { "id": "AC2", "source": "clarified", "requirement": "<a decision from W1>", "checks": ["..."], "mutation": "..." },
+    { "id": "AC3", "quote": "Create it in todo folder", "structural": true, "files": ["index.html"] } ],
   "context": [ { "quote": "Enhance my todo app", "reason": "names the project; not an ask" } ] }
 ```
 
-It fails (exit 1, NOT VERIFIED) if:
-- a quote isn't in the ticket, which means an invented ask;
-- a meaningful ticket word isn't covered by any quote, which means a dropped ask;
-- a mapped check failed or never ran in a **fresh** Chrome run;
-- anything logged a console error;
-- there's no real `ticket-<T>-*.png` screenshot.
+- **One ask per criterion.** A quote is at most 12 words from a single sentence. The ticket title
+  counts as ticket text, so its words have to be covered too.
+- **`mutation`** is JavaScript that breaks this one feature in the page, for example by
+  overriding a function or swallowing a click. It's required for every criterion that has checks.
+  The audit runs the checks again with the mutation applied, and at least one of the criterion's
+  checks must then **FAIL**. That proves the checks really test the feature: a check that prints
+  PASS no matter what can't survive this.
+- **`structural`** criteria rely on files alone. Use them only for asks about where things live.
+  The report flags them with ⚠ for the reviewer.
+- **`context`** is only for a short lead-in that starts a sentence (at most 6 words), and every
+  entry is flagged for the reviewer.
+- **`checks.js`** must assert real conditions. Hard-coded `"PASS ..."` strings,
+  `check(name, true)` and code that silences console errors all fail the audit. It must also
+  publish its results in `window.__checkResults`, so that if a broken feature makes it crash,
+  the checks that failed first still show up.
 
-Exit 2 means the audit couldn't run (no Chrome or no `gh`). Fix that, and never treat it as a
-pass. Don't move on until it says **VERIFIED**. Use `context` only for ticket text that truly
-isn't an ask, because reviewers see every entry. Commit the acceptance file with the project.
-The rules are unit-tested: `node --test .claude/skills/factory-loop/scripts/audit-lib.test.js`.
+It fails (exit 1, NOT VERIFIED) on:
+- an invented ask (a quote that isn't in the ticket);
+- a dropped ask (a ticket word no quote covers);
+- a mapped check that failed or never ran in a **fresh** Chrome run;
+- any console error;
+- a mutation its checks didn't catch;
+- a missing, forged or blank `ticket-<T>-*.png` screenshot.
+
+Exit 2 means the audit couldn't run (no Chrome, no `gh`, or a timeout). Fix that, and never
+treat it as a pass. Don't move on until it says **VERIFIED**. Commit the acceptance file with the
+project. The rules are unit-tested: `node --test .claude/skills/factory-loop/scripts/audit-lib.test.js`.
 
 ### W5. Commit (don't push yet)
 
@@ -296,9 +314,12 @@ The PR is *approved* if at least one reviewer's latest state is `APPROVED` and n
 
 - **Approved**: approved as above, or the user explicitly approved this PR in chat.
   Only then:
-  0. **Verification gate (ticket PRs).** Run
+  0. **Verification gate (ticket PRs).** Run it from an up-to-date `main`, so that a ticket
+     branch can't weaken the audit that judges it:
      `node .claude/skills/factory-loop/scripts/verify-audit.js --issue <N> --project <project> --pr <PR> --out <scratchpad>/audit-<PR>.md`.
-     It audits the PR's head commit, not your checkout.
+     It audits the PR's head commit, not your checkout. It also refuses a ticket PR that changes
+     `.claude/` (factory files belong in their own PR) or that embeds screenshots the PR didn't
+     add.
      - Exit 0: carry on and merge.
      - Exit 1: **don't merge, even though it's approved.** Post the report as a PR comment, tell
        the user which asks aren't verified, and handle it like changes requested.

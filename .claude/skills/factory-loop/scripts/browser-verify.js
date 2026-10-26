@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 // Verifies a web project in real headless Chrome via the Chrome DevTools Protocol (CDP).
 //
-//   node browser-verify.js --dir <folder> [--page index.html]
+//   node browser-verify.js --dir <folder> [--page index.html] [--before mutate.js]
 //                          [--test checks.js] [--setup setup.js] [--screenshot out.png]
 //                          [--width 900] [--height 700]
 //
 // --dir         folder served on a local http://127.0.0.1 port (no file:// quirks)
+// --before      JS evaluated (async) after load and before --test; the verification audit uses
+//               it to inject a mutation that breaks one feature
 // --test        JS evaluated in the page as an async function body. It must return an
-//               array of strings starting with "PASS " or "FAIL ". Exit code is 1 on any FAIL.
+//               array of one-line strings starting with "PASS " or "FAIL ". Exit code is 1 on any FAIL.
+//               Keep the array in window.__checkResults too: if the script crashes, the results
+//               so far are still printed before the crash.
 // --setup       JS evaluated (async) before the screenshot, e.g. to seed demo data.
 // --screenshot  PNG written after --test/--setup finish, so it shows the settled page.
+//
+// Output: PASS/FAIL lines are check results (and failures of the scripts themselves); ERROR lines
+// mean the run couldn't happen (no Chrome, CDP trouble), so they say nothing about the app.
 //
 // Chrome's profile goes in a short temp path: long Windows paths break IndexedDB
 // ("Internal error opening backing store"). Needs Node 22+, or Node 20 with
@@ -122,62 +129,114 @@ async function evaluate(client, source, label) {
   return result.value;
 }
 
+// Connects to the page, records console errors, and loads the app.
+async function openPage(chrome, url) {
+  const targets = await (await fetch(`http://127.0.0.1:${chrome.port}/json/list`)).json();
+  const client = cdp(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
+  await client.ready;
+  const consoleErrors = [];
+  client.on((msg) => {
+    if (msg.method === "Runtime.exceptionThrown") consoleErrors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
+    if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(" "));
+  });
+  await client.send("Runtime.enable");
+  await client.send("Page.enable");
+  const loaded = new Promise((resolve) => client.on((msg) => msg.method === "Page.loadEventFired" && resolve()));
+  await client.send("Page.navigate", { url });
+  await loaded;
+  console.log(`Loaded ${url}`);
+  return { client, consoleErrors };
+}
+
+// Prints check results; returns true if any is missing, not a PASS, or not a single line
+// (a result with a line break could otherwise print as several fake PASS lines).
+function reportResults(results) {
+  if (!Array.isArray(results) || results.length === 0) {
+    console.log("FAIL test returned no results");
+    return true;
+  }
+  let failed = false;
+  for (const raw of results) {
+    const line = String(raw);
+    if (/[\r\n]/.test(line)) {
+      console.log(`FAIL result contains a line break: ${JSON.stringify(line)}`);
+      failed = true;
+    } else {
+      console.log(line);
+      if (!line.startsWith("PASS ")) failed = true;
+    }
+  }
+  return failed;
+}
+
+async function saveScreenshot(client, file) {
+  await sleep(300); // let the last render paint
+  const { data } = await client.send("Page.captureScreenshot", { format: "png" });
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, Buffer.from(data, "base64"));
+  console.log(`Screenshot: ${path.resolve(file)}`);
+}
+
+// If the test script crashes, prints the results it had published so far in window.__checkResults,
+// so it's still visible which checks failed before the crash.
+async function printPartialResults(client) {
+  const { result } = await client.send("Runtime.evaluate", { expression: "window.__checkResults || []", returnByValue: true });
+  if (Array.isArray(result.value) && result.value.length) reportResults(result.value);
+}
+
+// Runs --before, --test, --setup and --screenshot in order; returns true if anything failed.
+async function runSteps(client, consoleErrors) {
+  let failed = false;
+  if (args.before) await evaluate(client, fs.readFileSync(args.before, "utf8"), "before");
+  if (args.test) {
+    try {
+      failed = reportResults(await evaluate(client, fs.readFileSync(args.test, "utf8"), "test"));
+    } catch (err) {
+      await printPartialResults(client);
+      throw err;
+    }
+  }
+  if (args.setup) await evaluate(client, fs.readFileSync(args.setup, "utf8"), "setup");
+  if (consoleErrors.length) {
+    failed = true;
+    consoleErrors.forEach((e) => console.log(`FAIL console error: ${e}`));
+  }
+  if (args.screenshot) await saveScreenshot(client, args.screenshot);
+  return failed;
+}
+
+async function shutdown(chrome, server, profile) {
+  server.close();
+  if (chrome) {
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(chrome.proc.pid), "/T", "/F"], { stdio: "ignore" });
+    else chrome.proc.kill();
+    await sleep(500);
+  }
+  // Chrome's crash handler can keep a profile file locked (EBUSY) for a while after exit. A leftover
+  // temp profile is harmless, so cleanup never fails the run.
+  try {
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  } catch (err) {
+    console.error(`note: couldn't remove temp profile ${profile} (${err.code}); it's safe to delete later`);
+  }
+}
+
 async function main() {
-  const width = Number(args.width || 900);
-  const height = Number(args.height || 700);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "bv-"));
   const server = await serve(path.resolve(args.dir));
   const url = `http://127.0.0.1:${server.address().port}/${args.page || "index.html"}`;
   let chrome;
-  let failed = false;
+  let failed = true;
   try {
-    chrome = await launchChrome(profile, width, height);
-    const targets = await (await fetch(`http://127.0.0.1:${chrome.port}/json/list`)).json();
-    const page = targets.find((t) => t.type === "page");
-    const client = cdp(page.webSocketDebuggerUrl);
-    await client.ready;
-
-    const consoleErrors = [];
-    client.on((msg) => {
-      if (msg.method === "Runtime.exceptionThrown") consoleErrors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
-      if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(" "));
-    });
-    await client.send("Runtime.enable");
-    await client.send("Page.enable");
-    const loaded = new Promise((resolve) => client.on((msg) => msg.method === "Page.loadEventFired" && resolve()));
-    await client.send("Page.navigate", { url });
-    await loaded;
-    console.log(`Loaded ${url}`);
-
-    if (args.test) {
-      const results = await evaluate(client, fs.readFileSync(args.test, "utf8"), "test");
-      for (const line of results || []) console.log(line);
-      if (!Array.isArray(results) || results.length === 0 || results.some((l) => !String(l).startsWith("PASS"))) failed = true;
-    }
-    if (args.setup) await evaluate(client, fs.readFileSync(args.setup, "utf8"), "setup");
-    if (consoleErrors.length) {
-      failed = true;
-      consoleErrors.forEach((e) => console.log(`FAIL console error: ${e}`));
-    }
-    if (args.screenshot) {
-      await sleep(300); // let the last render paint
-      const { data } = await client.send("Page.captureScreenshot", { format: "png" });
-      fs.mkdirSync(path.dirname(path.resolve(args.screenshot)), { recursive: true });
-      fs.writeFileSync(args.screenshot, Buffer.from(data, "base64"));
-      console.log(`Screenshot: ${path.resolve(args.screenshot)}`);
-    }
+    chrome = await launchChrome(profile, Number(args.width || 900), Number(args.height || 700));
+    const { client, consoleErrors } = await openPage(chrome, url);
+    failed = await runSteps(client, consoleErrors);
     client.close();
   } catch (err) {
-    failed = true;
-    console.log(`FAIL ${err.message}`);
+    // A script that throws is a failed check; anything else means the run itself broke.
+    console.log(`${/^(before|test|setup) threw/.test(err.message) ? "FAIL" : "ERROR"} ${err.message}`);
   } finally {
-    server.close();
-    if (chrome) {
-      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(chrome.proc.pid), "/T", "/F"], { stdio: "ignore" });
-      else chrome.proc.kill();
-      await sleep(500);
-    }
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await shutdown(chrome, server, profile);
   }
   console.log(failed ? "RESULT: FAIL" : "RESULT: PASS");
   process.exit(failed ? 1 : 0);

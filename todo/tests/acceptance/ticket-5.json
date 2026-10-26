@@ -15,13 +15,15 @@
         "completed occurrence stays as done history",
         "next occurrence is open, on schedule, with the same tags and repeat",
         "un-ticking and re-ticking does not create a duplicate"
-      ]
+      ],
+      "mutation": "repeatLabel = () => '';"
     },
     {
       "id": "AC2",
       "quote": "Everything should work on client side",
-      "checks": ["repeat rules are persisted"],
-      "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource"
+      "checks": ["changes are persisted in IndexedDB", "repeat rules are persisted"],
+      "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource",
+      "mutation": "const upd0 = taskStore.update; taskStore.update = (d, t) => upd0(d, { ...t, done: false });"
     },
     {
       "id": "AC3",
@@ -39,13 +41,15 @@
         "yearly: same date next year",
         "yearly on Feb 29 falls on Feb 28 in non-leap years",
         "interval is clamped to 1..99"
-      ]
+      ],
+      "mutation": "const add1 = addInterval; addInterval = (d, r) => add1(d, { ...r, every: 1 });"
     },
     {
       "id": "AC4",
       "source": "clarified",
       "requirement": "The next date follows the schedule, not the day it was completed",
-      "checks": ["overdue schedule skips ahead to today or later", "next date is today when the schedule lands on today"]
+      "checks": ["overdue schedule skips ahead to today or later", "next date is today when the schedule lands on today"],
+      "mutation": "nextDueDate = (d, r) => addInterval(d, r);"
     },
     {
       "id": "AC5",
@@ -57,7 +61,8 @@
         "'Does not repeat' stops repeating",
         "'Does not repeat' gives no rule",
         "completing a non-repeating task creates nothing new"
-      ]
+      ],
+      "mutation": "const pr0 = parseRepeat; parseRepeat = (u, e, d) => pr0(u || 'day', e, d || todayISO());"
     }
   ],
   "context": [

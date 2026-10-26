@@ -88,11 +88,14 @@ through.
   - quotes are copied word for word from the ticket;
   - `clarified` is used only for real W1 decisions;
   - `context` holds only ticket text that isn't an ask;
-  - each criterion maps to checks that actually exercise it.
+  - each criterion maps to checks that actually exercise it;
+  - each `mutation` breaks that criterion's own feature, not something unrelated that happens to
+    make one of its checks fail;
+  - `structural` criteria really are about where things live.
 
-  The verification audit (`verify-audit.js`) proves the mapped checks exist and pass in a fresh
-  run, but only a reviewer can judge whether they test the right thing. A criterion backed by
-  an unrelated check is a **major**.
+  The verification audit (`verify-audit.js`) proves that the mapped checks exist, pass in a fresh
+  run and fail when the feature is broken. Only a reviewer can judge whether they test the right
+  thing. A criterion backed by an unrelated check or mutation is a **major**.
 
 **Docs**
 - The project `CLAUDE.md` (features, data model, verify commands, check count) and the root
