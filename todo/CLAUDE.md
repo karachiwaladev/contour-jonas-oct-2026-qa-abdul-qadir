@@ -1,7 +1,8 @@
 # todo
 
 A todo app with a simple interface. Tasks are stored in the browser with IndexedDB.
-Source tickets: Ticket #3 (issue #4, the app) and Ticket #4 (issue #5, filters, due dates and tags).
+Source tickets: Ticket #3 (issue #4, the app), Ticket #4 (issue #5, filters, due dates and tags)
+and Ticket #5 (issue #7, recurring tasks).
 
 ## Features
 
@@ -13,6 +14,11 @@ Source tickets: Ticket #3 (issue #4, the app) and Ticket #4 (issue #5, filters, 
 - **Filters:** a status filter (All / Incomplete / Completed) and a one-at-a-time tag filter
   built from the tags in use. The two filters combine. They aren't saved, so they reset on reload.
 - **Sort order:** earliest due date first, undated tasks last, ties in creation order.
+- **Recurring tasks:** "Repeat every N day(s), week(s), month(s) or year(s)", set when adding a task or in Edit.
+  - A repeating task with no due date defaults to today.
+  - Completing it keeps the done task as history and creates the next occurrence once, with the same title, tags and repeat. Un-ticking and re-ticking doesn't create a duplicate.
+  - The next date follows the schedule: previous due date plus the interval. If that's still in the past, it moves forward until it's today or later. Monthly and yearly repeats keep their day of the month (`anchorDay`), clamping to the end of shorter months and to Feb 28 in non-leap years.
+  - Choosing "Does not repeat" stops it.
 
 ## Stack
 
@@ -41,9 +47,11 @@ node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --test tod
 node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --setup todo/tests/demo-setup.js --screenshot todo/screenshots/<name>.png --width 760 --height 900
 ```
 
-`tests/checks.js` has 40 checks covering every feature above. It also tests edge cases:
+`tests/checks.js` has 68 checks covering every feature above. It also tests edge cases:
 HTML in titles and tags, blank input, the empty and no-match states, persistence of
-creates and edits, and old records saved without `dueDate` or `tags`.
+creates and edits, and old records saved without `dueDate`, `tags` or `repeat`.
+The recurrence checks cover the date math for every unit and for every N, month-end and
+leap-year handling, catching up past overdue dates, and no duplicate on re-tick.
 
 ## Data model
 
@@ -51,11 +59,14 @@ IndexedDB database `todo-app` (v1), object store `tasks`, with an auto-increment
 
 ```
 { id: number, title: string, done: boolean, createdAt: number /* epoch ms */,
-  dueDate: "YYYY-MM-DD" | null, tags: string[] }
+  dueDate: "YYYY-MM-DD" | null, tags: string[],
+  repeat: { every: 1..99, unit: "day"|"week"|"month"|"year", anchorDay?: 1..31 } | null,
+  nextCreated?: true /* set once a completed repeating task has spawned its next occurrence */ }
 ```
 
-Records saved before Ticket #4 lack `dueDate` and `tags`. `normalize()` fills in the
-defaults, so no migration is needed.
+Records saved before Tickets #4 and #5 lack `dueDate`, `tags` and `repeat`. `normalize()` fills
+in the defaults, so no migration is needed. `setDone()` re-reads the stored task before
+completing it, so a click on a row that hasn't re-rendered yet can't write stale fields back.
 
 ## Conventions
 
