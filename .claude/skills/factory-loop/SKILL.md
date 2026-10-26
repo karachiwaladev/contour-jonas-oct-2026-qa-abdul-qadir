@@ -27,7 +27,7 @@ Get the signed-in user's login with `gh api user --jq .login`. You need it to sp
 
 ## Step 1: Find new issues
 
-Run `gh api` from inside the repo. The `{owner}/{repo}` placeholders are filled in from the git remote:
+Run `gh api` from inside the repo. The `{owner}/{repo}` placeholders are filled in from the git remote. Always put the API path in quotes, as the examples below do: PowerShell reads an unquoted `{owner}` as a script block and fails with "The command parameter was already specified" before anything reaches GitHub.
 
 ```
 gh api "repos/{owner}/{repo}/issues?state=open&per_page=50" --jq '.[] | select(.pull_request == null) | {number, title}'
@@ -48,7 +48,7 @@ If there are no new issues, say so in one line and stop. This happens on most `/
 ## Step 2: Claim with 👀
 
 ```
-gh api -X POST repos/{owner}/{repo}/issues/<N>/reactions -f content=eyes
+gh api -X POST "repos/{owner}/{repo}/issues/<N>/reactions" -f content=eyes
 ```
 
 Do this as soon as you pick up the issue, before drafting, so teammates see it's taken.
@@ -58,8 +58,8 @@ Do this as soon as you pick up the issue, before drafting, so teammates see it's
 Get the body and comments. Use the API rather than `gh issue view --comments`, which has returned nothing on some setups:
 
 ```
-gh api repos/{owner}/{repo}/issues/<N> --jq '{title, body, user: .user.login}'
-gh api repos/{owner}/{repo}/issues/<N>/comments --jq '.[] | {user: .user.login, body}'
+gh api "repos/{owner}/{repo}/issues/<N>" --jq '{title, body, user: .user.login}'
+gh api "repos/{owner}/{repo}/issues/<N>/comments" --jq '.[] | {user: .user.login, body}'
 ```
 
 Read existing comments before answering. Someone may have already answered, or the author may have changed the question.
@@ -96,7 +96,7 @@ The command prints the new comment's URL. Show that link to the user as confirma
 gh issue close <N> --reason completed
 ```
 
-Then confirm with `gh api repos/{owner}/{repo}/issues/<N> --jq '{state, state_reason}'`.
+Then confirm with `gh api "repos/{owner}/{repo}/issues/<N>" --jq '{state, state_reason}'`.
 
 **Expect this to sometimes fail with a permissions error** (`does not have the correct permissions to execute CloseIssue`). Anyone signed in can react and comment, but closing requires triage/write access to the repo or being the person who opened the issue. When it fails:
 
