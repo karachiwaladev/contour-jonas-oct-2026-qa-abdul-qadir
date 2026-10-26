@@ -26,6 +26,20 @@
           <input id="new-task-tags" name="tags" type="text" placeholder="work, urgent" maxlength="200">
         </label>
       </div>
+      <div class="new-task-row extras">
+        <span class="field repeat-field">
+          <label for="new-task-every">Repeat every</label>
+          <input id="new-task-every" name="every" type="number" min="1" max="99" value="1">
+          <label for="new-task-repeat" class="visually-hidden">Repeat</label>
+          <select id="new-task-repeat" name="repeat">
+            <option value="">Does not repeat</option>
+            <option value="day">day(s)</option>
+            <option value="week">week(s)</option>
+            <option value="month">month(s)</option>
+            <option value="year">year(s)</option>
+          </select>
+        </span>
+      </div>
     </form>
 
     <section class="filters" aria-label="Filters">

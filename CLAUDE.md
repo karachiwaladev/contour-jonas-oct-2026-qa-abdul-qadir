@@ -68,4 +68,4 @@ Never destructive. Details are in the skill.
 
 | Project | Path | Ticket | Summary |
 |---------|------|--------|---------|
-| todo | [todo/](todo/CLAUDE.md) | #3, #4 (issues #4, #5) | Todo app with due dates, tags and filters; IndexedDB storage |
+| todo | [todo/](todo/CLAUDE.md) | #3–#5 (issues #4, #5, #7) | Todo app with due dates, tags, filters and recurring tasks; IndexedDB storage |

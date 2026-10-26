@@ -30,8 +30,9 @@ function withStore(db, mode, fn) {
 
 const taskStore = {
   all: (db) => withStore(db, "readonly", (s) => s.getAll()),
-  add: (db, { title, dueDate = null, tags = [] }) =>
-    withStore(db, "readwrite", (s) => s.add({ title, done: false, dueDate, tags, createdAt: Date.now() })),
+  get: (db, id) => withStore(db, "readonly", (s) => s.get(id)),
+  add: (db, { title, dueDate = null, tags = [], repeat = null }) =>
+    withStore(db, "readwrite", (s) => s.add({ title, done: false, dueDate, tags, repeat, createdAt: Date.now() })),
   update: (db, task) => withStore(db, "readwrite", (s) => s.put(task)),
   remove: (db, id) => withStore(db, "readwrite", (s) => s.delete(id)),
 };
@@ -44,10 +45,60 @@ function parseTags(text) {
   return [...new Set(tags)];
 }
 
+function toISO(y, m, d) {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 // Today's date as YYYY-MM-DD in local time, matching <input type="date"> values.
 function todayISO() {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return toISO(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+// ---- Recurrence ----
+// repeat = { every: 1..99, unit: "day" | "week" | "month" | "year", anchorDay?: 1..31 } or null.
+// anchorDay keeps monthly/yearly tasks on their original day of the month: a task due on
+// the 31st lands on the last day of shorter months, then returns to the 31st.
+
+const REPEAT_UNITS = ["day", "week", "month", "year"];
+
+// Builds a repeat rule from form values; null means "does not repeat".
+function parseRepeat(unit, every, dueDate) {
+  if (!REPEAT_UNITS.includes(unit)) return null;
+  const n = Math.min(99, Math.max(1, Math.floor(Number(every)) || 1));
+  const repeat = { every: n, unit };
+  if ((unit === "month" || unit === "year") && dueDate) repeat.anchorDay = Number(dueDate.slice(8, 10));
+  return repeat;
+}
+
+function daysInMonth(y, m) {
+  return new Date(y, m, 0).getDate();
+}
+
+// One step of the schedule: dueDate + interval.
+function addInterval(dueDate, repeat) {
+  const [y, m, d] = dueDate.split("-").map(Number);
+  if (repeat.unit === "day" || repeat.unit === "week") {
+    const next = new Date(y, m - 1, d + repeat.every * (repeat.unit === "week" ? 7 : 1));
+    return toISO(next.getFullYear(), next.getMonth() + 1, next.getDate());
+  }
+  const anchor = repeat.anchorDay || d;
+  const months = repeat.unit === "month" ? repeat.every : repeat.every * 12;
+  const total = m - 1 + months;
+  const ny = y + Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return toISO(ny, nm, Math.min(anchor, daysInMonth(ny, nm)));
+}
+
+// Next occurrence after dueDate, following the schedule and skipping dates already in the past.
+function nextDueDate(dueDate, repeat, today = todayISO()) {
+  let next = addInterval(dueDate, repeat);
+  while (next < today) next = addInterval(next, repeat);
+  return next;
+}
+
+function repeatLabel(repeat) {
+  return repeat.every === 1 ? `Every ${repeat.unit}` : `Every ${repeat.every} ${repeat.unit}s`;
 }
 
 // "overdue" | "due-today" | null. Completed tasks are never flagged.
@@ -63,9 +114,26 @@ function formatDate(iso) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-// Tasks saved before due dates and tags existed lack those fields.
+// Tasks saved before due dates, tags and repeats existed lack those fields.
 function normalize(task) {
-  return { ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [] };
+  return { ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [], repeat: task.repeat || null };
+}
+
+// Marks a task done or not done. Completing a repeating task also creates its next
+// occurrence, once: nextCreated stops un-tick/re-tick from making duplicates.
+// Re-reads the stored task first, so a quick click on a not-yet-re-rendered row can't
+// write stale fields (e.g. a repeat that was just removed) back to the database.
+async function setDone(staleTask, done) {
+  const stored = await taskStore.get(db, staleTask.id);
+  if (!stored) return; // deleted in the meantime
+  const task = normalize(stored);
+  const updated = { ...task, done };
+  if (done && task.repeat && !task.nextCreated) {
+    updated.nextCreated = true;
+    const dueDate = nextDueDate(task.dueDate || todayISO(), task.repeat);
+    await taskStore.add(db, { title: task.title, dueDate, tags: task.tags, repeat: task.repeat });
+  }
+  await taskStore.update(db, updated);
 }
 
 // Earliest due date first, undated tasks last, ties in creation order.
@@ -84,6 +152,8 @@ const form = document.getElementById("new-task-form");
 const input = document.getElementById("new-task-title");
 const dueInput = document.getElementById("new-task-due");
 const tagsInput = document.getElementById("new-task-tags");
+const repeatUnitInput = document.getElementById("new-task-repeat");
+const repeatEveryInput = document.getElementById("new-task-every");
 const statusFilter = document.getElementById("status-filter");
 const tagFilter = document.getElementById("tag-filter");
 const list = document.getElementById("task-list");
@@ -114,8 +184,29 @@ function renderMeta(task) {
     const status = dueStatus(task);
     if (status) meta.append(el("span", { className: `badge ${status}`, textContent: status === "overdue" ? "Overdue" : "Due today" }));
   }
+  if (task.repeat) meta.append(el("span", { className: "chip repeat", textContent: `↻ ${repeatLabel(task.repeat)}` }));
   for (const tag of task.tags) meta.append(el("span", { className: "chip tag", textContent: tag }));
   return meta;
+}
+
+// The interval only matters when a unit is chosen.
+function syncRepeatEvery(unitSelect, everyInput) {
+  everyInput.disabled = !REPEAT_UNITS.includes(unitSelect.value);
+}
+
+// Builds the "Repeat every [N] [unit]" controls used by the edit form (the add form is in index.html).
+function renderRepeatControls(repeat) {
+  const every = el("input", { type: "number", min: 1, max: 99, value: repeat ? repeat.every : 1, className: "edit-every" });
+  every.setAttribute("aria-label", "Repeat interval");
+  const unit = el("select", { className: "edit-repeat" }, [
+    el("option", { value: "", textContent: "Does not repeat" }),
+    ...REPEAT_UNITS.map((u) => el("option", { value: u, textContent: `${u}(s)` })),
+  ]);
+  unit.setAttribute("aria-label", "Repeat");
+  unit.value = repeat ? repeat.unit : "";
+  syncRepeatEvery(unit, every);
+  unit.addEventListener("change", () => syncRepeatEvery(unit, every));
+  return { every, unit, wrapper: el("span", { className: "repeat-field" }, [el("span", { textContent: "Repeat every" }), every, unit]) };
 }
 
 function renderEditForm(task) {
@@ -123,14 +214,20 @@ function renderEditForm(task) {
   due.setAttribute("aria-label", "Due date");
   const tags = el("input", { type: "text", value: task.tags.join(", "), placeholder: "work, urgent", className: "edit-tags" });
   tags.setAttribute("aria-label", "Tags");
+  const repeatControls = renderRepeatControls(task.repeat);
   const save = el("button", { type: "submit", textContent: "Save", className: "save" });
   const cancel = el("button", { type: "button", textContent: "Cancel", className: "secondary cancel" });
 
-  const editForm = el("form", { className: "edit-form" }, [due, tags, save, cancel]);
+  const editForm = el("form", { className: "edit-form" }, [due, tags, repeatControls.wrapper, save, cancel]);
   editForm.addEventListener("submit", (event) => {
     event.preventDefault();
     view.editingId = null;
-    run(() => taskStore.update(db, { ...task, dueDate: due.value || null, tags: parseTags(tags.value) }));
+    // A repeating task needs a due date to schedule from; default to today.
+    let dueDate = due.value || null;
+    const unit = repeatControls.unit.value;
+    if (REPEAT_UNITS.includes(unit) && !dueDate) dueDate = todayISO();
+    const repeat = parseRepeat(unit, repeatControls.every.value, dueDate);
+    run(() => taskStore.update(db, { ...task, dueDate, tags: parseTags(tags.value), repeat }));
   });
   cancel.addEventListener("click", () => {
     view.editingId = null;
@@ -146,7 +243,7 @@ function renderTask(task) {
 
   const checkbox = el("input", { type: "checkbox", checked: task.done });
   checkbox.setAttribute("aria-label", `Mark "${task.title}" as ${task.done ? "not done" : "done"}`);
-  checkbox.addEventListener("change", () => run(() => taskStore.update(db, { ...task, done: checkbox.checked })));
+  checkbox.addEventListener("change", () => run(() => setDone(task, checkbox.checked)));
 
   // textContent, never innerHTML: titles and tags are user input
   const body = el("div", { className: "task-body" }, [el("div", { className: "task-title", textContent: task.title })]);
@@ -220,10 +317,17 @@ form.addEventListener("submit", (event) => {
   event.preventDefault();
   const title = input.value.trim();
   if (!title) return;
-  const task = { title, dueDate: dueInput.value || null, tags: parseTags(tagsInput.value) };
+  const unit = repeatUnitInput.value;
+  // A repeating task needs a due date to schedule from; default to today.
+  const dueDate = dueInput.value || (REPEAT_UNITS.includes(unit) ? todayISO() : null);
+  const task = { title, dueDate, tags: parseTags(tagsInput.value), repeat: parseRepeat(unit, repeatEveryInput.value, dueDate) };
   form.reset();
+  syncRepeatEvery(repeatUnitInput, repeatEveryInput);
   run(() => taskStore.add(db, task));
 });
+
+repeatUnitInput.addEventListener("change", () => syncRepeatEvery(repeatUnitInput, repeatEveryInput));
+syncRepeatEvery(repeatUnitInput, repeatEveryInput);
 
 statusFilter.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-status]");

@@ -150,6 +150,82 @@ await render();
 check("tasks without dueDate/tags still render", !!find("Legacy task") && !find("Legacy task").querySelector(".badge") && chipTags(find("Legacy task")).length === 0);
 
 await clear();
+
+// ---- Recurring tasks: schedule math (Ticket #5) ----
+const R = (unit, every, due) => parseRepeat(unit, every, due);
+const past = "2000-01-01"; // "today" far in the past so no catch-up kicks in
+check("daily: next day", nextDueDate("2026-03-10", R("day", 1, "2026-03-10"), past) === "2026-03-11");
+check("every 3 days crosses a month boundary", nextDueDate("2026-01-30", R("day", 3, "2026-01-30"), past) === "2026-02-02");
+check("weekly: +7 days", nextDueDate("2026-12-28", R("week", 1, "2026-12-28"), past) === "2027-01-04");
+check("every 2 weeks: +14 days", nextDueDate("2026-03-10", R("week", 2, "2026-03-10"), past) === "2026-03-24");
+check("monthly keeps the day of month", nextDueDate("2026-03-15", R("month", 1, "2026-03-15"), past) === "2026-04-15");
+const endOfMonth = R("month", 1, "2026-01-31");
+check("monthly on the 31st clamps to the last day of February", nextDueDate("2026-01-31", endOfMonth, past) === "2026-02-28");
+check("monthly returns to the 31st after a short month", nextDueDate("2026-02-28", endOfMonth, past) === "2026-03-31");
+check("every 3 months rolls over the year", nextDueDate("2026-11-30", R("month", 3, "2026-11-30"), past) === "2027-02-28");
+check("yearly: same date next year", nextDueDate("2026-07-04", R("year", 1, "2026-07-04"), past) === "2027-07-04");
+check("yearly on Feb 29 falls on Feb 28 in non-leap years", nextDueDate("2028-02-29", R("year", 1, "2028-02-29"), past) === "2029-02-28");
+check("overdue schedule skips ahead to today or later", nextDueDate(shift(-10), R("week", 1, shift(-10)), today) === shift(4));
+check("next date is today when the schedule lands on today", nextDueDate(shift(-14), R("week", 1, shift(-14)), today) === today);
+check("interval is clamped to 1..99", R("day", 0).every === 1 && R("day", 500).every === 99 && R("day", "abc").every === 1);
+check("'Does not repeat' gives no rule", R("", 3, today) === null);
+
+// ---- Recurring tasks: UI ----
+const addRepeating = async (title, due, unit, every, tags = "") => {
+  repeatUnitInput.value = unit;
+  repeatUnitInput.dispatchEvent(new Event("change"));
+  repeatEveryInput.value = String(every);
+  await add(title, due, tags);
+};
+check("interval field is disabled until a repeat is chosen", repeatEveryInput.disabled);
+await addRepeating("Water plants", shift(-3), "week", 2, "home");
+const plants = find("Water plants");
+check("repeating task shows its schedule", plants.querySelector(".chip.repeat")?.textContent === "↻ Every 2 weeks");
+check("form resets to 'Does not repeat' after adding", repeatUnitInput.value === "" && repeatEveryInput.disabled);
+await addRepeating("Stand-up notes", "", "day", 1);
+check("repeating task without a date defaults to due today", (await taskStore.all(db)).find((t) => t.title === "Stand-up notes").dueDate === today);
+check("singular label for an interval of 1", find("Stand-up notes").querySelector(".chip.repeat").textContent === "↻ Every day");
+find("Water plants").querySelector("input[type=checkbox]").click();
+check("completing a repeating task creates the next occurrence",
+  await waitFor(() => items().filter((li) => li.querySelector(".task-title").textContent === "Water plants").length === 2));
+let waterings = (await taskStore.all(db)).filter((t) => t.title === "Water plants").sort((a, b) => a.createdAt - b.createdAt);
+check("completed occurrence stays as done history", waterings[0].done === true && waterings[0].dueDate === shift(-3));
+check("next occurrence is open, on schedule, with the same tags and repeat",
+  waterings[1].done === false && waterings[1].dueDate === shift(11) && waterings[1].tags.join() === "home" && waterings[1].repeat.every === 2 && waterings[1].repeat.unit === "week");
+const doneItem = () => items().find((li) => li.querySelector(".task-title").textContent === "Water plants" && li.classList.contains("done"));
+doneItem().querySelector("input[type=checkbox]").click();
+await waitFor(() => !doneItem());
+items().filter((li) => li.querySelector(".task-title").textContent === "Water plants")
+  .find((li) => li.dataset.id === String(waterings[0].id)).querySelector("input[type=checkbox]").click();
+await waitFor(() => !!doneItem());
+await sleep(150);
+check("un-ticking and re-ticking does not create a duplicate", (await taskStore.all(db)).filter((t) => t.title === "Water plants").length === 2);
+
+find("Stand-up notes").querySelector(".edit").click();
+await waitFor(() => !!find("Stand-up notes").querySelector(".edit-form"));
+editForm = find("Stand-up notes").querySelector(".edit-form");
+check("edit form shows the current repeat", editForm.querySelector(".edit-repeat").value === "day" && editForm.querySelector(".edit-every").value === "1");
+editForm.querySelector(".edit-repeat").value = "month";
+editForm.querySelector(".edit-repeat").dispatchEvent(new Event("change"));
+editForm.querySelector(".edit-every").value = "3";
+editForm.requestSubmit();
+check("editing changes the repeat", await waitFor(() => find("Stand-up notes")?.querySelector(".chip.repeat")?.textContent === "↻ Every 3 months"));
+find("Stand-up notes").querySelector(".edit").click();
+await waitFor(() => !!find("Stand-up notes").querySelector(".edit-form"));
+editForm = find("Stand-up notes").querySelector(".edit-form");
+editForm.querySelector(".edit-repeat").value = "";
+editForm.querySelector(".edit-repeat").dispatchEvent(new Event("change"));
+editForm.requestSubmit();
+check("'Does not repeat' stops repeating", await waitFor(() =>
+  !!find("Stand-up notes") && !find("Stand-up notes").querySelector(".edit-form") && !find("Stand-up notes").querySelector(".chip.repeat")));
+find("Stand-up notes").querySelector("input[type=checkbox]").click();
+await waitFor(() => find("Stand-up notes")?.classList.contains("done"));
+await sleep(150);
+check("completing a non-repeating task creates nothing new", (await taskStore.all(db)).filter((t) => t.title === "Stand-up notes").length === 1);
+stored = await taskStore.all(await openDb());
+check("repeat rules are persisted", stored.find((t) => t.title === "Water plants" && !t.done).repeat.unit === "week" && stored.find((t) => t.title === "Stand-up notes").repeat === null);
+
+await clear();
 check("empty state returns after clearing all tasks", !emptyState.hidden && emptyState.textContent.startsWith("No tasks yet"));
 check("no error message shown", errorBox.hidden);
 return out;
