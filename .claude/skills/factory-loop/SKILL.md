@@ -114,4 +114,4 @@ or `· still open (no close permission)`. If you skipped an issue or the user re
 
 ## Running on a schedule
 
-To process issues as they arrive, the user can wrap this in `/loop`, e.g. `/loop 10m /factory-loop`. Each tick runs Steps 1–6. Ticks with no new issues should produce a single short line. Unless the user said to run unattended, a tick that finds a new issue claims it and drafts the answer, then waits for the user's OK before posting.
+To process issues as they arrive, the user can wrap this in `/loop`. The default is every minute: `/loop 1m /factory-loop`. Each tick runs Steps 1–6. With ticks this frequent, most find nothing new, so a tick with no new issues should produce a single short line and nothing else. Unless the user said to run unattended, a tick that finds a new issue claims it and drafts the answer, then waits for the user's OK before posting.
