@@ -192,6 +192,22 @@ It reads `<project>/tests/acceptance/ticket-<T>.json`, which you write from the 
   `check(name, true)` and code that silences console errors all fail the audit. It must also
   publish its results in `window.__checkResults`, so that if a broken feature makes it crash,
   the checks that failed first still show up.
+- **Drive the UI the way a user would**, with `await trusted.click(el)` and
+  `await trusted.type(el, text)`. Chrome dispatches these as real mouse and keyboard input
+  (`isTrusted`), which page code can't fake, and `trusted.click` refuses to click an element
+  that's still moving or covered. Set values directly only for native date and select widgets.
+- **Evidence comes from Chrome, not from the checks.** Every audit run records an evidence pack
+  through the DevTools Protocol:
+  - console messages attributed to their source (app, test script or browser);
+  - every network request;
+  - each trusted input;
+  - IndexedDB read directly by Chrome;
+  - a screencast (`base/video.html`);
+  - the Chrome version and binary SHA-256;
+  - a SHA-256 manifest of all of the above.
+
+  `"network": "local-only"` on a criterion checks Chrome's network log, which is stronger
+  than `absent`. Add `--evidence <dir>` to keep the packs.
 
 It fails (exit 1, NOT VERIFIED) on:
 - an invented ask (a quote that isn't in the ticket);
@@ -324,6 +340,11 @@ The PR is *approved* if at least one reviewer's latest state is `APPROVED` and n
      - Exit 1: **don't merge, even though it's approved.** Post the report as a PR comment, tell
        the user which asks aren't verified, and handle it like changes requested.
      - Exit 2: don't merge. Say what stopped the audit.
+
+     The **Verification gate** GitHub Action runs the same audit on every ticket PR, with main's
+     code, and stores the report and Chrome's evidence packs as a build artifact. Its result is
+     the verdict of record, because it comes from GitHub rather than from this session. Don't
+     merge while that check is red or still running.
 
      Only an explicit chat instruction such as "merge PR #N without verification" overrides
      this, and the issue comment then says it was merged unverified. Factory PRs, which aren't

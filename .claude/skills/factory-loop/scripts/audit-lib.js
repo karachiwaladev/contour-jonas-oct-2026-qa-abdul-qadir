@@ -49,6 +49,7 @@ function criterionProblems(c) {
   for (const key of ["checks", "files"]) if (c[key] !== undefined && !isStringArray(c[key])) problems.push(`${id}: "${key}" must be an array of names`);
   for (const f of isStringArray(c.files) ? c.files : []) if (!SAFE_PATH.test(f)) problems.push(`${id}: file "${f}" must be a relative path inside the project`);
   if (c.absent !== undefined && (typeof c.absent !== "string" || !validRegex(c.absent))) problems.push(`${id}: "absent" is not a valid regular expression`);
+  if (c.network !== undefined && c.network !== "local-only") problems.push(`${id}: "network" can only be "local-only"`);
   const hasChecks = isStringArray(c.checks) && c.checks.length > 0;
   if (hasChecks && !(typeof c.mutation === "string" && c.mutation.trim())) problems.push(`${id}: needs a "mutation" that breaks the feature, to prove its checks can fail`);
   if (!hasChecks && !(c.structural === true && isStringArray(c.files) && c.files.length && c.quote)) {
@@ -111,7 +112,14 @@ function parseRun(stdout) {
   return run;
 }
 
-// Grades each criterion. io = { fileExists(relPath) -> isFile, absentHits(regexSource) -> ["file:line", ...] }.
+// Requests Chrome saw going anywhere but the local test server (from the evidence pack's network log).
+const externalRequests = (rows) => (rows || []).filter((r) => !r.local).map((r) => `${r.method} ${r.url}`);
+
+// How many console messages each source produced: app:<file>, test-script, browser:<area>.
+const consoleBySource = (rows) => (rows || []).reduce((acc, r) => ({ ...acc, [r.source]: (acc[r.source] || 0) + 1 }), {});
+
+// Grades each criterion. io = { fileExists(relPath) -> isFile, absentHits(regexSource) -> ["file:line", ...],
+// externalRequests() -> ["GET https://...", ...] from Chrome's network log }.
 function gradeCriteria(acc, run, io) {
   return acc.criteria.map((c) => {
     const problems = [];
@@ -121,6 +129,7 @@ function gradeCriteria(acc, run, io) {
     }
     for (const file of c.files || []) if (!io.fileExists(file)) problems.push(`file missing: ${file}`);
     if (c.absent) for (const hit of io.absentHits(c.absent)) problems.push(`forbidden pattern /${c.absent}/ at ${hit}`);
+    if (c.network === "local-only") for (const req of io.externalRequests()) problems.push(`Chrome saw an external request: ${req}`);
     return { ...c, problems, ok: problems.length === 0 };
   });
 }
@@ -175,6 +184,6 @@ function prEvidence(body, issue) {
 }
 
 module.exports = {
-  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy,
+  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy, externalRequests, consoleBySource,
   pngInfo, screenshotProblems, prEvidence, MAX_QUOTE_WORDS, MAX_CONTEXT_WORDS,
 };

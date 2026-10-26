@@ -1,0 +1,89 @@
+# Verification gate for ticket PRs. It runs on pull_request_target, so the workflow and the audit code
+# come from main: a ticket PR can't weaken the audit that judges it (the audit also refuses ticket PRs
+# that change .claude/ or .github/). The PR's files are only exported as data with `git archive`, and
+# its checks.js runs inside headless Chrome; no PR code runs in Node, and the token is read-only.
+# The verdict, the report and the evidence packs recorded by Chrome are produced and stored by GitHub.
+name: Verification gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to audit"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: verification-gate-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number || inputs.pr }}
+    steps:
+      - name: Check out main (the trusted audit code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Find the ticket
+        id: ticket
+        run: |
+          branch=$(gh pr view "$PR" --json headRefName --jq .headRefName)
+          if [[ ! "$branch" =~ ^ticket-([0-9]+)- ]]; then
+            echo "kind=factory" >> "$GITHUB_OUTPUT"
+            echo "Not a ticket branch ($branch); Factory CI covers it."
+            exit 0
+          fi
+          T="${BASH_REMATCH[1]}"
+          issue=$(gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences[0].number // empty')
+          git fetch --quiet origin "pull/$PR/head"
+          project=$(git ls-tree -r --name-only FETCH_HEAD | grep -E "^[A-Za-z0-9._-]+/tests/acceptance/ticket-$T\.json$" | head -1 | cut -d/ -f1)
+          {
+            echo "kind=ticket"
+            echo "issue=$issue"
+            echo "project=$project"
+          } >> "$GITHUB_OUTPUT"
+          if [[ -z "$issue" || -z "$project" ]]; then
+            echo "::error::PR #$PR must close its issue and add <project>/tests/acceptance/ticket-$T.json"
+            exit 1
+          fi
+
+      - name: Verification audit (fresh Chrome run, mutations, evidence)
+        if: steps.ticket.outputs.kind == 'ticket'
+        env:
+          ISSUE: ${{ steps.ticket.outputs.issue }}
+          PROJECT: ${{ steps.ticket.outputs.project }}
+        run: |
+          node .claude/skills/factory-loop/scripts/verify-audit.js --issue "$ISSUE" --project "$PROJECT" \
+            --pr "$PR" --evidence evidence --out audit-report.md
+
+      - name: Report
+        if: always() && steps.ticket.outputs.kind == 'ticket'
+        run: cat audit-report.md >> "$GITHUB_STEP_SUMMARY" || echo "No report: the audit couldn't run (see the log)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence
+        if: always() && steps.ticket.outputs.kind == 'ticket'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence-pr-${{ env.PR }}
+          path: |
+            evidence/
+            audit-report.md
+          retention-days: 30
+          if-no-files-found: warn

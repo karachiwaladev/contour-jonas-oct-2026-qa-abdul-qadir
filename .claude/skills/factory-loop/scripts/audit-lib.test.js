@@ -76,9 +76,22 @@ test("parseRun separates checks, console errors, run errors and the result", () 
   assert.deepStrictEqual(run, { pass: ["a"], fail: ["b"], consoleErrors: ["boom"], errors: ["no chrome"], result: "FAIL" });
 });
 
+test("Chrome's network log decides local-only, and console messages are attributed by source", () => {
+  const rows = [
+    { method: "GET", url: "http://127.0.0.1:5000/app.js", local: true },
+    { method: "POST", url: "https://api.example.com/sync", local: false },
+  ];
+  assert.deepStrictEqual(lib.externalRequests(rows), ["POST https://api.example.com/sync"]);
+  const [c] = lib.gradeCriteria(acc([crit("N", "q", { checks: ["ok"], network: "local-only" })]), { pass: ["ok"], fail: [] },
+    { fileExists: () => true, absentHits: () => [], externalRequests: () => lib.externalRequests(rows) });
+  assert.deepStrictEqual(c.problems, ["Chrome saw an external request: POST https://api.example.com/sync"]);
+  assert.deepStrictEqual(lib.validateAcceptance(acc([crit("N", "q", { network: "anywhere" })])), ['N: "network" can only be "local-only"']);
+  assert.deepStrictEqual(lib.consoleBySource([{ source: "app:app.js" }, { source: "test-script" }, { source: "app:app.js" }]), { "app:app.js": 2, "test-script": 1 });
+});
+
 test("grading and mutation kills", () => {
   const run = { pass: ["ok"], fail: ["broken"] };
-  const io = { fileExists: (f) => f === "index.html", absentHits: () => ["app.js:3"] };
+  const io = { fileExists: (f) => f === "index.html", absentHits: () => ["app.js:3"], externalRequests: () => [] };
   const [good, bad] = lib.gradeCriteria(acc([
     crit("G", "q", { checks: ["ok"], files: ["index.html"] }),
     crit("B", "q", { checks: ["broken", "never-ran"], files: ["gone.js"], absent: "fetch\\(" }),

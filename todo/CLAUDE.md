@@ -55,7 +55,14 @@ node .claude/skills/factory-loop/scripts/verify-audit.js --issue 7 --project tod
 ```
 
 It maps each ticket's words to checks through `tests/acceptance/ticket-<T>.json`, reruns the
-checks fresh, and checks the screenshots. Add `--pr <PR>` to audit a pull request's head commit.
+checks fresh, and checks the screenshots. Add `--pr <PR>` to audit a pull request's head commit,
+and `--evidence <dir>` to keep the evidence packs Chrome records. Each pack holds the console
+attributed to its source, the network log, an IndexedDB dump, a video (`base/video.html`), the
+Chrome binary hash and a manifest. On GitHub, the same audit runs on every PR and its evidence
+is attached to the run.
+
+The checks drive the UI with `trusted.click` and `trusted.type`, which is real input dispatched
+by Chrome, not synthetic `.click()` calls.
 
 `tests/checks.js` has 68 checks covering every feature above. It also tests edge cases:
 HTML in titles and tags, blank input, the empty and no-match states, persistence of

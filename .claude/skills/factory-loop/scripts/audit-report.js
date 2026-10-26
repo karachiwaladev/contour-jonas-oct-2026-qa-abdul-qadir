@@ -1,5 +1,8 @@
 // Renders verify-audit.js findings as the markdown report posted on the PR.
 
+const path = require("path");
+const { consoleBySource } = require("./audit-lib");
+
 const esc = (s) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const ok = (b) => (b ? "✅" : "❌");
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -29,6 +32,23 @@ function criteriaTable(criteria) {
   return lines;
 }
 
+// What Chrome itself recorded during the base run (cdp-evidence.js), as opposed to what the checks report.
+function browserEvidence(f) {
+  const ev = f.run && f.run.evidence;
+  if (!ev) return [];
+  const m = ev.manifest;
+  const bins = m.chrome.binaries.map((b) => `${path.basename(b.file)} sha256 \`${b.sha256.slice(0, 16)}…\``).join(", ");
+  const sources = Object.entries(consoleBySource(ev.console)).map(([s, n]) => `${s} ${n}`).join(", ") || "none";
+  return ["### Browser evidence (recorded by Chrome, not by the checks)", "",
+    `- Chrome: ${m.chrome.product} (${bins})`,
+    `- Real input dispatched through Chrome (\`isTrusted\` clicks and typing): ${m.counts.trustedInputs}`,
+    `- Network requests: ${m.counts.network}, of which external: ${m.counts.external}`,
+    `- Console messages by source: ${sources}`,
+    `- Screencast frames: ${m.counts.frames} (open \`base/video.html\` in the evidence pack to watch the run)`,
+    `- Base-run manifest SHA-256: \`${ev.manifestSha256}\``,
+    `- Evidence packs: ${f.evidenceKept ? `kept in \`${path.basename(f.evidenceRoot)}/\` (base run + one per mutation)` : "temporary; run with `--evidence <dir>` to keep them (CI uploads them as an artifact)"}`, ""];
+}
+
 function evidenceSection(f) {
   const lines = ["### Screenshots", "", ...(f.shots || []).map((s) =>
     `- \`${s.file}\`: ${s.info ? `${s.info.width}×${s.info.height}, ${Math.round(s.info.bytes / 1024)} KB` : "unreadable"} ${ok(!s.problems.length)}`), ""];
@@ -55,7 +75,7 @@ function report(f) {
     lines.push("**Treated as context, not tested. The reviewer must confirm none of these is an ask:**",
       ...f.context.map((c) => `- ⚠ "${c.quote}" (${c.reason})`), "");
   }
-  lines.push(...evidenceSection(f));
+  lines.push(...browserEvidence(f), ...evidenceSection(f));
   if (!verified) lines.push("### Problems", "", ...f.blockers.map((b) => `- ${b}`), "");
   if (f.notes.length) lines.push("### Notes", "", ...f.notes.map((n) => `- ${n}`), "");
   return lines.join("\n");

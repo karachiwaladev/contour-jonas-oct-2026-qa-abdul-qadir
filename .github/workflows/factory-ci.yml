@@ -1,0 +1,59 @@
+# Factory CI: runs with the PR's own code on every PR (and on main). It unit-tests the audit rules,
+# then runs the verification audit for every ticket that has acceptance criteria, so a change to the
+# factory can't silently break verification. Evidence packs recorded by Chrome are uploaded.
+name: Factory CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: factory-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-all:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Unit tests of the audit rules
+        run: node --test .claude/skills/factory-loop/scripts/audit-lib.test.js
+
+      - name: Verification audit of every ticket
+        run: |
+          status=0
+          for acc in */tests/acceptance/ticket-*.json; do
+            [ -e "$acc" ] || continue
+            project="${acc%%/*}"
+            T="$(basename "$acc" .json)"; T="${T#ticket-}"
+            issue="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, "")).issue)' "$acc")"
+            echo "::group::Ticket #$T (issue #$issue, $project/)"
+            mkdir -p "evidence/ticket-$T"
+            node .claude/skills/factory-loop/scripts/verify-audit.js --issue "$issue" --project "$project" \
+              --evidence "evidence/ticket-$T" --out "evidence/ticket-$T/report.md" || status=1
+            cat "evidence/ticket-$T/report.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-ci-evidence
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: warn

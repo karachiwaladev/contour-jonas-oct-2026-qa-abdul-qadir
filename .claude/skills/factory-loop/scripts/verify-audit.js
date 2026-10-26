@@ -2,8 +2,10 @@
 // Verification audit: did the factory really verify the feature the ticket asked for?
 //
 //   node verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md]
-//                        [--acceptance <file>] [--ticket-file ticket.json]
+//                        [--evidence <dir>] [--acceptance <file>] [--ticket-file ticket.json]
 //
+// --evidence    keep the evidence packs recorded from Chrome (base run with video, one per mutation)
+//               in this folder; CI uploads it as an artifact. Without it they go to a temp folder.
 // --acceptance  criteria file from the current checkout instead of the audited tree (for old PRs)
 // --ticket-file {title, body} JSON instead of fetching the issue with gh (offline runs)
 //
@@ -30,7 +32,7 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) args[argv[i].replace(/^--/, "")] = argv[i + 1];
   if (!args.issue || !args.project) {
-    throw new io.AuditError("usage: verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md] [--acceptance f] [--ticket-file f]");
+    throw new io.AuditError("usage: verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md] [--evidence dir] [--acceptance f] [--ticket-file f]");
   }
   args.project = args.project.replace(/\\/g, "/").replace(/\/+$/, "");
   return args;
@@ -51,7 +53,8 @@ function checkRun(f, projectDir, acc) {
   const checksFile = path.join(projectDir, "tests", "checks.js");
   if (!fs.existsSync(checksFile)) return f.blockers.push(`no browser checks at ${f.project}/tests/checks.js`);
   for (const why of lib.lintChecks(fs.readFileSync(checksFile, "utf8"))) f.blockers.push(`checks.js: ${why}`);
-  f.run = io.runBrowser(projectDir);
+  f.run = io.runBrowser(projectDir, { evidenceDir: path.join(f.evidenceRoot, "base"), video: true });
+  if (!f.run.evidence.manifest.counts.trustedInputs) f.notes.push("checks.js drove the UI with no trusted (Chrome-dispatched) input");
   if (f.run.fail.length) f.blockers.push(`${f.run.fail.length} browser check(s) failed: ${f.run.fail.join("; ")}`);
   if (f.run.consoleErrors.length) f.blockers.push(`console errors: ${f.run.consoleErrors.join("; ")}`);
   if ((f.run.result !== "PASS" || f.run.exitCode !== 0) && !f.run.fail.length && !f.run.consoleErrors.length) {
@@ -61,6 +64,7 @@ function checkRun(f, projectDir, acc) {
   f.criteria = lib.gradeCriteria(acc, f.run, {
     fileExists: (rel) => io.fileExists(projectDir, rel),
     absentHits: (pattern) => io.absentHits(projectDir, pattern),
+    externalRequests: () => lib.externalRequests(f.run.evidence.network),
   });
   for (const c of f.criteria.filter((x) => !x.ok)) f.blockers.push(`${c.id} not verified: ${c.problems.join("; ")}`);
 }
@@ -69,7 +73,7 @@ function checkRun(f, projectDir, acc) {
 function checkMutations(f, projectDir) {
   if (!f.criteria || f.run?.result !== "PASS") return;
   const targets = f.criteria.filter((c) => c.ok && (c.checks || []).length && c.mutation);
-  const runs = io.runMutations(projectDir, targets);
+  const runs = io.runMutations(projectDir, targets, f.evidenceRoot);
   for (const c of targets) {
     c.mutationRun = runs[c.id];
     c.killed = lib.killedBy(c, runs[c.id]);
@@ -81,7 +85,7 @@ function checkMutations(f, projectDir) {
 }
 
 function checkPr(f, pr, repoRoot) {
-  const factory = pr.changed.filter((p) => p.startsWith(".claude/") && !p.startsWith(".claude/logs/"));
+  const factory = pr.changed.filter((p) => (p.startsWith(".claude/") && !p.startsWith(".claude/logs/")) || p.startsWith(".github/"));
   if (factory.length) f.blockers.push(`a ticket PR must not change factory files (${factory.join(", ")}); ship them in a separate PR`);
   const ev = lib.prEvidence(pr.body, f.issue);
   const pinned = ev.images.filter((i) => i.path.startsWith(`${f.project}/screenshots/ticket-${f.T}-`));
@@ -131,6 +135,8 @@ function audit(args) {
   const pr = args.pr ? io.checkoutPr(args.pr, repoRoot, args.project) : null;
   const root = pr ? pr.dir : repoRoot;
   const f = { T, issue: args.issue, project: args.project, ref: pr ? `PR #${pr.number} @ ${pr.headRefOid.slice(0, 7)}` : "working tree", blockers: [], notes: [] };
+  f.evidenceRoot = args.evidence ? path.resolve(args.evidence) : fs.mkdtempSync(path.join(require("os").tmpdir(), "ve-"));
+  f.evidenceKept = !!args.evidence;
   try {
     const projectDir = path.join(root, args.project);
     const acc = loadAcceptance(f, args, root, projectDir);
@@ -142,6 +148,7 @@ function audit(args) {
     return f;
   } finally {
     if (pr) pr.cleanup();
+    if (!f.evidenceKept) fs.rmSync(f.evidenceRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
 

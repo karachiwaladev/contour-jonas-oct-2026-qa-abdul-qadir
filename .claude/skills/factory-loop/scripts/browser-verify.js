@@ -17,6 +17,11 @@
 //
 // Output: PASS/FAIL lines are check results (and failures of the scripts themselves); ERROR lines
 // mean the run couldn't happen (no Chrome, CDP trouble), so they say nothing about the app.
+// --evidence    folder for an evidence pack recorded from Chrome's own events (cdp-evidence.js):
+//               console with sources, network, trusted inputs, IndexedDB, Chrome hash, manifest
+// --video 1     also record a screencast of the run into the evidence pack
+//
+// Test scripts get window.trusted (cdp-input.js): click/type via real Chrome input, not .click().
 //
 // Chrome's profile goes in a short temp path: long Windows paths break IndexedDB
 // ("Internal error opening backing store"). Needs Node 22+, or Node 20 with
@@ -27,6 +32,8 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { Evidence, sha256File } = require("./cdp-evidence");
+const { installTrustedInput } = require("./cdp-input");
 
 if (typeof WebSocket === "undefined" && !process.execArgv.includes("--experimental-websocket")) {
   const r = spawnSync(process.execPath, ["--experimental-websocket", __filename, ...process.argv.slice(2)], { stdio: "inherit" });
@@ -36,7 +43,7 @@ if (typeof WebSocket === "undefined" && !process.execArgv.includes("--experiment
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, "")] = process.argv[i + 1];
 if (!args.dir) {
-  console.error("usage: browser-verify.js --dir <folder> [--page index.html] [--test f.js] [--setup f.js] [--screenshot out.png]");
+  console.error("usage: browser-verify.js --dir <folder> [--page index.html] [--before f.js] [--test f.js] [--setup f.js] [--screenshot out.png] [--evidence dir] [--video 1]");
   process.exit(2);
 }
 
@@ -69,17 +76,20 @@ function serve(root) {
 async function launchChrome(profile, width, height) {
   const exe = CHROME_CANDIDATES.find((p) => fs.existsSync(p));
   if (!exe) throw new Error("Chrome/Edge not found; set CHROME_PATH");
-  const proc = spawn(exe, [
+  const flags = [
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
-    `--user-data-dir=${profile}`, "--remote-debugging-port=0", `--window-size=${width},${height}`, "about:blank",
-  ], { stdio: "ignore" });
+    `--user-data-dir=${profile}`, "--remote-debugging-port=0", `--window-size=${width},${height}`,
+  ];
+  // Ubuntu CI runners block Chrome's user-namespace sandbox; the page served there is the repo's own app.
+  if (process.env.CI && process.platform === "linux") flags.push("--no-sandbox");
+  const proc = spawn(exe, [...flags, "about:blank"], { stdio: "ignore" });
   const portFile = path.join(profile, "DevToolsActivePort");
   // Chrome creates the file before writing it and may hold it locked (EBUSY on Windows), so poll
   // until it can be read and holds a port number.
   for (let i = 0; i < 100; i++) {
     try {
       const port = fs.readFileSync(portFile, "utf8").split("\n")[0].trim();
-      if (/^\d+$/.test(port)) return { proc, port };
+      if (/^\d+$/.test(port)) return { proc, port, exe };
     } catch (err) {
       if (!["ENOENT", "EBUSY", "EPERM"].includes(err.code)) throw err;
     }
@@ -129,8 +139,9 @@ async function evaluate(client, source, label) {
   return result.value;
 }
 
-// Connects to the page, records console errors, and loads the app.
-async function openPage(chrome, url) {
+// Connects to the page, records console errors (and the evidence pack, if any), loads the app and
+// installs trusted input for the test script.
+async function openPage(chrome, url, evidence) {
   const targets = await (await fetch(`http://127.0.0.1:${chrome.port}/json/list`)).json();
   const client = cdp(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
   await client.ready;
@@ -141,11 +152,29 @@ async function openPage(chrome, url) {
   });
   await client.send("Runtime.enable");
   await client.send("Page.enable");
+  if (evidence) await evidence.attach(client);
   const loaded = new Promise((resolve) => client.on((msg) => msg.method === "Page.loadEventFired" && resolve()));
   await client.send("Page.navigate", { url });
   await loaded;
+  await installTrustedInput(client, evidence);
   console.log(`Loaded ${url}`);
   return { client, consoleErrors };
+}
+
+const scriptInfo = (file) => (file ? { file: path.basename(file), sha256: sha256File(file) } : undefined);
+
+// Writes the evidence manifest and prints its hash, so the pack is tied to this run's output.
+async function sealEvidence(evidence, url, failed) {
+  try {
+    const m = await evidence.finish({
+      page: url, result: failed ? "FAIL" : "PASS", finishedAt: new Date().toISOString(),
+      scripts: { test: scriptInfo(args.test), before: scriptInfo(args.before), setup: scriptInfo(args.setup) },
+    });
+    console.log(`EVIDENCE ${evidence.dir} manifest-sha256=${m.manifestSha256} trusted-inputs=${m.counts.trustedInputs} ` +
+      `requests=${m.counts.network} external=${m.counts.external} frames=${m.counts.frames}`);
+  } catch (err) {
+    console.log(`ERROR couldn't write the evidence pack: ${err.message}`);
+  }
 }
 
 // Prints check results; returns true if any is missing, not a PASS, or not a single line
@@ -226,16 +255,21 @@ async function main() {
   const server = await serve(path.resolve(args.dir));
   const url = `http://127.0.0.1:${server.address().port}/${args.page || "index.html"}`;
   let chrome;
+  let page;
+  let evidence;
   let failed = true;
   try {
     chrome = await launchChrome(profile, Number(args.width || 900), Number(args.height || 700));
-    const { client, consoleErrors } = await openPage(chrome, url);
-    failed = await runSteps(client, consoleErrors);
-    client.close();
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    if (args.evidence) evidence = new Evidence(path.resolve(args.evidence), { origin, exe: chrome.exe, video: args.video === "1" });
+    page = await openPage(chrome, url, evidence);
+    failed = await runSteps(page.client, page.consoleErrors);
   } catch (err) {
     // A script that throws is a failed check; anything else means the run itself broke.
     console.log(`${/^(before|test|setup) threw/.test(err.message) ? "FAIL" : "ERROR"} ${err.message}`);
   } finally {
+    if (evidence && page) await sealEvidence(evidence, url, failed);
+    if (page) page.client.close();
     await shutdown(chrome, server, profile);
   }
   console.log(failed ? "RESULT: FAIL" : "RESULT: PASS");

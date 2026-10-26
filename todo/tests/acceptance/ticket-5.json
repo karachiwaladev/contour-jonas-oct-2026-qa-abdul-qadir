@@ -22,6 +22,7 @@
       "id": "AC2",
       "quote": "Everything should work on client side",
       "checks": ["changes are persisted in IndexedDB", "repeat rules are persisted"],
+      "network": "local-only",
       "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource",
       "mutation": "const upd0 = taskStore.update; taskStore.update = (d, t) => upd0(d, { ...t, done: false });"
     },
