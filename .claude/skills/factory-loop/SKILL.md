@@ -126,6 +126,11 @@ and ask. Never stash or discard someone's work.
   keep that file under 100 lines.
 - Prefer no build step and no dependencies when the ticket allows it. Render user input with
   `textContent`, never `innerHTML`.
+- **Avoid god objects.** Keep each file and function to one responsibility. The
+  `god-object-guard` hook checks every file you write: a **WARN** means stop growing that
+  file, and a **FAIL** blocks until you split it. If a ticket would push an existing file
+  over the limits, plan the split in W2 rather than bolting more on. Limits and the
+  splitting approach are in `factory-code-review`.
 
 ### W4. Verify in Chrome
 

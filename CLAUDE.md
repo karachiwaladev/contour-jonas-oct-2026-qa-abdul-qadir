@@ -26,7 +26,7 @@ concerns and leave a one-line pointer here.
 CLAUDE.md                  ← you are here: rules + index
 README.md                  ← workshop info (scoring, schedule)
 .claude/skills/<skill>/    ← factory skills (the loop's tools)
-.claude/hooks/             ← Stop hooks (prompt log, auto commit + push)
+.claude/hooks/             ← hooks (prompt log, scan-gated commit + push, god-object guard)
 <project>/                 ← one top-level folder per project
   CLAUDE.md                ← project-level context (layer 2)
 ```
@@ -64,7 +64,8 @@ comments on the issue → waits for manual review before merging. Never destruct
 | browser-verify | [.claude/skills/factory-loop/scripts/browser-verify.js](.claude/skills/factory-loop/scripts/browser-verify.js) | Headless Chrome checks + screenshots |
 | factory-code-review | [.claude/skills/factory-code-review/SKILL.md](.claude/skills/factory-code-review/SKILL.md) | Pre-PR review vs ticket/plan: correctness, conventions, tests, docs |
 | factory-security-review | [.claude/skills/factory-security-review/SKILL.md](.claude/skills/factory-security-review/SKILL.md) | Pre-PR secret/XSS/injection scan (`scripts/scan.js`) + threat review |
-| Stop hooks | [.claude/settings.json](.claude/settings.json) | Log prompts to `.claude/logs/prompts.jsonl`; auto commit + push |
+| Stop hooks | [.claude/settings.json](.claude/settings.json) | Log prompts to `.claude/logs/prompts.jsonl`; auto commit, push only if the security scan passes |
+| god-object-guard | [.claude/hooks/god-object-guard.js](.claude/hooks/god-object-guard.js) | PostToolUse (Write/Edit): warns/blocks oversized, mixed-responsibility files (`factory-code-review/scripts/god-object.js`) |
 
 ### Project index
 

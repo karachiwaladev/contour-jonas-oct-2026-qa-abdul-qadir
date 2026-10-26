@@ -1,6 +1,6 @@
 ---
 name: factory-code-review
-description: Code review of a ticket branch or pull request in this software factory, before it goes to a human reviewer. It checks that the change does what the ticket and the approved plan asked, looks for correctness bugs and edge cases, conventions, test coverage in the project's browser checks, docs and the CLAUDE.md index, and scope creep. It produces a severity-ranked report that gates the PR, with blockers and majors fixed first. Use this whenever factory-loop reaches its code-review step, or whenever the user asks to review a branch, PR or diff, "check my code", or "is this ready for review" in this repo, even if they don't name the skill.
+description: Code review of a ticket branch or pull request in this software factory, before it goes to a human reviewer. It checks that the change does what the ticket and the approved plan asked, looks for correctness bugs and edge cases, god objects (oversized files, classes and functions that mix responsibilities, via scripts/god-object.js), conventions, test coverage in the project's browser checks, docs and the CLAUDE.md index, and scope creep. It produces a severity-ranked report that gates the PR, with blockers and majors fixed first. Use this whenever factory-loop reaches its code-review step, or whenever the user asks to review a branch, PR or diff, "check my code", or "is this ready for review" in this repo, even if they don't name the skill.
 ---
 
 # factory-code-review
@@ -41,6 +41,35 @@ confirm every item yourself before acting on it.
 - Error paths: failures are shown or handled, never swallowed silently, and the app never
   ends up half-updated.
 - Older data and backwards compatibility: records saved by earlier versions still load.
+
+**Design: no god objects**
+
+Run `node .claude/skills/factory-code-review/scripts/god-object.js --changed --base main`. It
+flags files, classes and functions that own too much:
+
+| Signal | Warn | Fail |
+|---|---|---|
+| Code lines per file | > 300 | > 500 |
+| Functions/methods per file | > 25 | > 40 |
+| Longest function | > 50 lines | > 80 lines |
+| Methods per class | > 15 | > 25 |
+| Top-level `let`/`var` | > 8 | > 15 |
+| Concerns mixed in one file (DOM/UI, storage, network, date/scheduling, server/fs) | > 3 | > 4 |
+
+- **FAIL is a major finding.** Split the file before the PR. Separate it by responsibility
+  (e.g. `storage.js`, `recurrence.js`, `ui.js` plus a small entry file), break long
+  functions into named helpers with one job each, and move shared state into one owner.
+  Keep behaviour identical, and rerun the browser checks to prove it.
+- **WARN is a minor finding.** Don't grow the file further in this PR. If the ticket adds to
+  a file that's already at WARN, propose the split as part of the plan or as a follow-up
+  ticket.
+- **Justified exceptions:** a file can carry `quality: allow-large-file <reason>` in its first
+  5 lines, for example generated code or a fixture. That turns a FAIL into a WARN, so judge
+  whether the reason holds up.
+
+The `god-object-guard` PostToolUse hook runs the same check after every Write or Edit, so
+problems are usually caught while writing. This review step catches anything that slipped
+through.
 
 **Quality and conventions**
 - Follows the project `CLAUDE.md` (e.g. no build step, `textContent` never `innerHTML`).
