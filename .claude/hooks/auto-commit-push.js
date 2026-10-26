@@ -2,7 +2,9 @@
 // Stop hook: commits any uncommitted changes in the repo and pushes the current branch.
 // Deliberately non-destructive: no force push, no reset, no --no-verify, and it does nothing
 // while a merge/rebase/cherry-pick is in progress or HEAD is detached. Files that look like
-// secrets are never committed. Failures are reported on stderr and never block stopping.
+// secrets are never committed, and nothing is pushed until the factory-security-review scanner
+// passes (blocking findings or a scan that can't run hold the push; the commit stays local).
+// Failures are reported on stderr and never block stopping.
 
 const { spawnSync } = require("child_process");
 const fs = require("fs");
@@ -11,6 +13,7 @@ const path = require("path");
 const SECRET_PATTERNS = [/(^|\/)\.env(\..*)?$/, /\.(pem|key|p12|pfx)$/, /(^|\/)id_(rsa|ed25519|ecdsa)$/];
 // Only committed on the default branch, so ticket-branch PRs stay focused and never conflict on it.
 const PROMPT_LOG = ".claude/logs/prompts.jsonl";
+const SCANNER = ".claude/skills/factory-security-review/scripts/scan.js";
 
 const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const git = (...args) => spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -49,6 +52,19 @@ function main() {
   const upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
   const ahead = upstream.status === 0 ? Number(git("rev-list", "--count", "@{u}..HEAD").stdout.trim()) : 1;
   if (!ahead) return;
+
+  // Security gate: scan what this push would publish (everything since the remote default
+  // branch) before it leaves the machine.
+  if (fs.existsSync(path.join(cwd, SCANNER))) {
+    const remoteDefault = git("rev-parse", "--verify", "--quiet", `origin/${defaultBranch}`).status === 0;
+    const scan = spawnSync(process.execPath, [SCANNER, "--base", remoteDefault ? `origin/${defaultBranch}` : defaultBranch], { cwd, encoding: "utf8" });
+    if (scan.status !== 0) {
+      const lines = `${scan.stdout}${scan.stderr}`.trim().split("\n");
+      const summary = lines.filter((l) => /^\[(CRITICAL|HIGH)\]|^RESULT:|^scan failed/.test(l)).slice(0, 6).join("; ");
+      return fail(`push held by security scan (exit ${scan.status}); commit is local only. ${summary}`);
+    }
+  }
+
   const push = upstream.status === 0 ? git("push", "origin", branch) : git("push", "-u", "origin", branch);
   if (push.status !== 0) return fail(`push failed: ${push.stderr.trim().split("\n").pop()}`);
 }

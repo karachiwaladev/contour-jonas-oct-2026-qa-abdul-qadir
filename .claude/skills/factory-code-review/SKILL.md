@@ -75,8 +75,10 @@ the fixes touched code). Commit the fixes on the ticket branch with a message su
 
 ## 5. Report
 
-Post the report as a PR comment (`gh pr comment <PR> --body-file <file>`) and put its
-one-line result in the PR body:
+Write the report to the scratchpad as `review-<branch>-code.md`. If the PR already exists,
+post it with `gh pr comment <PR> --body-file <file>`. If it doesn't yet (the normal case
+inside factory-loop, where W6 runs before W8), hand the file back: factory-loop posts it when
+it opens the PR, and puts its one-line result in the PR body. Format:
 
 ```markdown
 ## Code review: <branch>

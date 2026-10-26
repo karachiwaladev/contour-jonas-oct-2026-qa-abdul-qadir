@@ -30,7 +30,11 @@ It checks the lines added since `main`, including uncommitted and untracked file
 - **destructive commands** inside scripts
 - **changes to `.claude/settings*.json` or `.claude/hooks/`**
 
-The exit code is 1 when anything is critical or high. Treat every hit as a **lead**. Open the
+Exit codes: **0** means no blocking findings, **1** means something is critical or high, and
+**2** means the scan couldn't run (bad or missing base ref, git error). Never report exit 2 as
+clean; fix the cause and rerun. The scan diffs from the merge-base with `--base`, so changes
+that landed on `main` after branching aren't counted. The Stop hook runs the same scanner
+and holds the push on exit 1 or 2. Treat every hit as a **lead**. Open the
 code and confirm it is a real issue before reporting it. A confirmed false positive gets
 `// security-scan: ignore` on that line, plus one sentence in the report saying why.
 
@@ -78,7 +82,10 @@ Never force-push or rewrite history without their explicit OK.
 
 ## 4. Report
 
-Write the report to a file and post it as a PR comment (`gh pr comment <PR> --body-file <file>`):
+Write the report to the scratchpad as `review-<branch>-security.md`. If the PR already exists,
+post it with `gh pr comment <PR> --body-file <file>`. If it doesn't yet (the normal case
+inside factory-loop, where W7 runs before W8), hand the file back and factory-loop posts it.
+Format:
 
 ```markdown
 ## Security review: <branch>
