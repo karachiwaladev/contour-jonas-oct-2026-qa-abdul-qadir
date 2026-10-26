@@ -44,8 +44,8 @@ README.md                  ← workshop info (scoring, schedule)
 Use the `factory-loop` skill (`/factory-loop`, or `/loop 1m /factory-loop`). It:
 claims the issue with 👀 → for build work, asks clarifying questions → plans and
 gets approval → builds on a `ticket-<T>-<slug>` branch → verifies in Chrome (DevTools
-Protocol) with screenshots → opens a PR (`Closes #N`) and comments on the issue.
-Never destructive. Details are in the skill.
+Protocol) with screenshots → code review + security review → opens a PR (`Closes #N`),
+comments on the issue → waits for manual review before merging. Never destructive.
 
 ## Ground rules
 
@@ -62,6 +62,8 @@ Never destructive. Details are in the skill.
 |------|------|---------|
 | factory-loop | [.claude/skills/factory-loop/SKILL.md](.claude/skills/factory-loop/SKILL.md) | Claim, clarify, plan, build, verify and answer GitHub issues |
 | browser-verify | [.claude/skills/factory-loop/scripts/browser-verify.js](.claude/skills/factory-loop/scripts/browser-verify.js) | Headless Chrome checks + screenshots |
+| factory-code-review | [.claude/skills/factory-code-review/SKILL.md](.claude/skills/factory-code-review/SKILL.md) | Pre-PR review vs ticket/plan: correctness, conventions, tests, docs |
+| factory-security-review | [.claude/skills/factory-security-review/SKILL.md](.claude/skills/factory-security-review/SKILL.md) | Pre-PR secret/XSS/injection scan (`scripts/scan.js`) + threat review |
 | Stop hooks | [.claude/settings.json](.claude/settings.json) | Log prompts to `.claude/logs/prompts.jsonl`; auto commit + push |
 
 ### Project index
