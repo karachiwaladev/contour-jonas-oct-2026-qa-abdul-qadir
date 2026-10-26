@@ -1,0 +1,68 @@
+{
+  "ticket": 4,
+  "issue": 5,
+  "criteria": [
+    {
+      "id": "AC1",
+      "quote": "add filters only see completed, incomplete and all tasks",
+      "checks": [
+        "Completed filter shows only completed tasks",
+        "Incomplete filter shows only incomplete tasks",
+        "All filter shows every task",
+        "summary notes how many are shown when filtered",
+        "no-match message when filters hide everything"
+      ],
+      "mutation": "statusFilter.addEventListener('click', (e) => e.stopImmediatePropagation(), true);"
+    },
+    {
+      "id": "AC2",
+      "quote": "add a due date",
+      "checks": ["due date is stored with the task", "due date is shown on the task", "Save updates the due date and tags", "edits are persisted"],
+      "mutation": "const add0 = taskStore.add; taskStore.add = (d, t) => add0(d, { ...t, dueDate: null });"
+    },
+    {
+      "id": "AC3",
+      "quote": "add tags to my ticket",
+      "checks": ["tags are trimmed, lowercased and de-duplicated", "tags render as text, not HTML", "Save updates the due date and tags", "tasks without dueDate/tags still render"],
+      "mutation": "parseTags = () => [];"
+    },
+    {
+      "id": "AC4",
+      "quote": "filter the tasks by available tags",
+      "checks": [
+        "tag filter lists every tag in use, sorted",
+        "clicking a tag shows only tasks with that tag",
+        "selected tag chip is marked pressed",
+        "tag filter combines with the status filter",
+        "clicking the selected tag again clears the tag filter",
+        "All tags chip clears the tag filter",
+        "deleting a tag's last task clears that tag filter"
+      ],
+      "mutation": "tagFilter.addEventListener('click', (e) => e.stopImmediatePropagation(), true);"
+    },
+    {
+      "id": "AC5",
+      "source": "clarified",
+      "requirement": "Due dates are date-only, with overdue tasks highlighted",
+      "checks": ["past-due incomplete task is marked Overdue", "task due today is marked Due today", "future and undated tasks have no badge", "completed tasks are never flagged overdue"],
+      "mutation": "dueStatus = () => null;"
+    },
+    {
+      "id": "AC6",
+      "source": "clarified",
+      "requirement": "Tasks are sorted by due date",
+      "checks": ["tasks sort by due date, undated last", "edited task moves to its due-date position"],
+      "mutation": "compareTasks = (a, b) => b.createdAt - a.createdAt;"
+    },
+    {
+      "id": "AC7",
+      "source": "clarified",
+      "requirement": "Tags (and the due date) can be edited after creation",
+      "checks": ["Edit opens an inline form with the task's values", "Save updates the due date and tags", "Cancel discards edits"],
+      "mutation": "taskStore.update = async () => {};"
+    }
+  ],
+  "context": [
+    { "quote": "Enhance my todo app", "reason": "names the existing project to extend (todo/); the asks follow" }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "ticket": 3,
+  "issue": 4,
+  "criteria": [
+    {
+      "id": "AC1",
+      "quote": "a todo app with a simple interface",
+      "files": ["index.html", "app.js", "styles.css"],
+      "checks": ["empty state shown when there are no tasks", "empty state hidden once tasks exist", "no error message shown"],
+      "mutation": "Object.defineProperty(emptyState, 'textContent', { get: () => '', set() {} });"
+    },
+    {
+      "id": "AC2",
+      "quote": "using a client side db",
+      "checks": ["changes are persisted in IndexedDB"],
+      "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource",
+      "mutation": "const upd0 = taskStore.update; taskStore.update = (d, t) => upd0(d, { ...t, done: false });"
+    },
+    {
+      "id": "AC3",
+      "quote": "create a task",
+      "checks": ["create a task", "create a second task", "blank titles are ignored", "task titles render as text, not HTML"],
+      "mutation": "taskStore.add = async () => {};"
+    },
+    {
+      "id": "AC4",
+      "quote": "mark it done",
+      "checks": ["mark a task done", "summary counts remaining tasks", "mark a task not done again"],
+      "mutation": "setDone = async () => {};"
+    },
+    {
+      "id": "AC5",
+      "quote": "delete it",
+      "checks": ["delete a task"],
+      "mutation": "taskStore.remove = async () => {};"
+    },
+    {
+      "id": "AC6",
+      "quote": "Create it in todo folder",
+      "structural": true,
+      "files": ["index.html", "CLAUDE.md"]
+    }
+  ]
+}

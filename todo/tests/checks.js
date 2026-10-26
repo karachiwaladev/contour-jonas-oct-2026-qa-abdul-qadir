@@ -2,7 +2,7 @@
 //   node .claude/skills/factory-loop/scripts/browser-verify.js --dir todo --test todo/tests/checks.js
 // Evaluated inside the page as an async function body; returns "PASS ..."/"FAIL ..." lines.
 
-const out = [];
+const out = (window.__checkResults = []); // published so a crash still reports what ran (see browser-verify.js)
 const check = (name, ok) => out.push(`${ok ? "PASS" : "FAIL"} ${name}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Poll until the UI reaches the expected state (IndexedDB work is asynchronous).
