@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-prompts.js\"",
-            "timeout": 30
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-prompts.js\"; node \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-commit-push.js\"",
+            "timeout": 60
           }
         ]
       }
