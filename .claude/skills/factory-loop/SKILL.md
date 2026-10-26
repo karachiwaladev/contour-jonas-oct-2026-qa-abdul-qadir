@@ -10,7 +10,8 @@ goes down one of two tracks:
 
 - **Question ticket** (asks for information) → draft an answer → user approves → post → close.
 - **Work ticket** (asks for files, a project, a feature or a change) → **clarify → plan →
-  approval → build → verify in Chrome with screenshots → commit & push → comment → close**.
+  approval → branch → build → verify in Chrome with screenshots → push → pull request →
+  comment**. The issue closes when the PR is merged.
 
 The user approves anything that goes out under their name. They also approve the plan
 before any building starts, because building on wrong assumptions wastes far more time than
@@ -70,7 +71,7 @@ and a **question ticket** otherwise.
 ## Question track
 
 Draft the reply and show it to the user. Wait for a clear yes, then post it and close the
-issue (Steps W7–W8 below show how).
+issue (see "Closing without a PR" below).
 
 ```markdown
 **Question:** <restated in one line>
@@ -96,10 +97,21 @@ use (the ticket's wording wins), tech and storage choices, UI expectations, and 
 
 Present a short plan that covers the folder and files, the tech, the features (mapped to
 the ticket's asks), how you'll verify each one in the browser, the screenshots you'll take,
-and what you'll commit and comment. Wait for approval. Approval of the plan covers the build,
-commit, push and results comment it describes. Anything outside the plan needs a new OK.
+the branch and PR, and what you'll comment. Wait for approval. Approval of the plan covers
+the build, commits, push, PR and results comment it describes. Anything outside the plan
+needs a new OK.
 
-### W3. Build
+### W3. Branch, then build
+
+Start every work ticket on its own branch, cut from an up-to-date `main`:
+
+```
+git switch main && git pull --ff-only
+git switch -c ticket-<T>-<short-slug>        # e.g. ticket-4-filters-due-dates-tags
+```
+
+If the working tree has uncommitted changes other than `.claude/logs/prompts.jsonl`, stop
+and ask. Never stash or discard someone's work.
 
 - Put each project in its own top-level folder with a `CLAUDE.md` (purpose, stack, run,
   verify, data model, source ticket). Add a row to the root `CLAUDE.md` **Project index** and
@@ -131,40 +143,61 @@ node .claude/skills/factory-loop/scripts/browser-verify.js --dir <project> --set
 
 Fix anything that fails and rerun until everything passes. Never report a result you didn't see.
 
-### W5. Commit & push
+### W5. Commit & push the branch
 
-Commit with a message naming the ticket (`Ticket #3: Todo app`) and push to `main`. A Stop
-hook (`.claude/hooks/auto-commit-push.js`) also commits and pushes any leftovers on every
-stop. It's a safety net, so still make your own descriptive commits. If the push is
-rejected (403, no write access), tell the user. Never force-push.
+Commit on the ticket branch with a message naming the ticket (`Ticket #4: Filters, due dates
+and tags`). In PowerShell, pass multi-line or quoted messages with `git commit -F <file>`,
+because embedded double quotes break the arguments. Then run `git push -u origin <branch>`.
+Never force-push.
 
-### W6. Comment with results and screenshots
+A Stop hook (`.claude/hooks/auto-commit-push.js`) commits and pushes leftovers on every stop,
+on whatever branch is checked out. It's a safety net, so still make your own descriptive
+commits. On a ticket branch it leaves `.claude/logs/prompts.jsonl` out, which keeps PRs to
+the ticket's work and avoids conflicts with `main`.
 
-Only after the push succeeds, so the links and images resolve. Post from a file
-(`gh issue comment <N> --body-file <file>`):
+### W6. Open the pull request
+
+Write the PR body to a file and run
+`gh pr create --base main --head <branch> --title "Ticket #<T>: <title>" --body-file <file>`:
 
 ```markdown
-**Done:** <one line>
+Closes #<N>
 
-**What was built:** <files/folders with links>
+**What changed:** <bullets mapped to the ticket's asks, with file links>
 **How to run:** <one line>
 **Verification (Chrome, DevTools Protocol):** <N/N checks passed: short list>
 
-![<alt>](https://github.com/{owner}/{repo}/blob/main/<project>/screenshots/<file>.png?raw=true)
+![<alt>](https://github.com/{owner}/{repo}/blob/<commit-sha>/<project>/screenshots/<file>.png?raw=true)
 ```
 
-GitHub's API can't upload images to a comment, so screenshots are committed and embedded
-by URL.
+Embed screenshots by **commit SHA**, not branch name, so the images still load after the
+merge. GitHub's API can't upload images directly, so screenshots are committed and linked.
+`Closes #<N>` closes the issue automatically when the PR merges.
 
-### W7–W8. Close and report
+### W7. Comment on the issue
 
-`gh issue close <N> --reason completed`, then confirm with
-`gh api "repos/{owner}/{repo}/issues/<N>" --jq '{state, state_reason}'`. If it fails on
-permissions, don't retry. Say the issue is still open and who can close it.
+Post a short comment on the issue (`gh issue comment <N> --body-file <file>`) with the PR
+link, the check results and the same embedded screenshots, so the ticket itself shows
+the work.
+
+### W8. Hand back, then report
+
+Switch back with `git switch main` so the next ticket and the prompt log start from `main`.
+Don't merge the PR yourself unless the user asks. When they do, use
+`gh pr merge <PR> --merge` (no squash/rebase, and don't delete the branch), then
+`git pull --ff-only` on `main`. Note that the workshop scores what's on `main`, so
+unmerged PRs don't count yet; mention this when you report.
 
 End with one line per issue, for example:
-`#4 "Todo app": 👀 · built todo/ · 13/13 checks · pushed · commented · closed`.
+`#5 "Filters": 👀 · branch ticket-4-filters · 40/40 checks · PR #6 opened · commented`.
 Name any step that is blocked, and say what's blocking it.
+
+### Closing without a PR
+
+Question tickets, and anything the user explicitly says to close, close directly with
+`gh issue close <N> --reason completed`. Then confirm with
+`gh api "repos/{owner}/{repo}/issues/<N>" --jq '{state, state_reason}'`. If it fails on
+permissions, don't retry. Say the issue is still open and who can close it.
 
 ## Running on a schedule
 

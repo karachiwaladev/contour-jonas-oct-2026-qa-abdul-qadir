@@ -9,6 +9,8 @@ const fs = require("fs");
 const path = require("path");
 
 const SECRET_PATTERNS = [/(^|\/)\.env(\..*)?$/, /\.(pem|key|p12|pfx)$/, /(^|\/)id_(rsa|ed25519|ecdsa)$/];
+// Only committed on the default branch, so ticket-branch PRs stay focused and never conflict on it.
+const PROMPT_LOG = ".claude/logs/prompts.jsonl";
 
 const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const git = (...args) => spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -26,15 +28,15 @@ function main() {
   }
   const branch = git("symbolic-ref", "--quiet", "--short", "HEAD").stdout.trim();
   if (!branch) return fail("detached HEAD; skipping");
+  const defaultBranch = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").stdout.trim().replace(/^origin\//, "") || "main";
 
   git("add", "-A");
   const staged = git("diff", "--cached", "--name-only").stdout.split("\n").filter(Boolean);
   const secrets = staged.filter((f) => SECRET_PATTERNS.some((re) => re.test(f)));
-  if (secrets.length) {
-    git("reset", "-q", "--", ...secrets); // unstage only; the files stay on disk untouched
-    process.stderr.write(`auto-commit-push: not committing possible secrets: ${secrets.join(", ")}\n`);
-  }
-  const files = staged.filter((f) => !secrets.includes(f));
+  if (secrets.length) process.stderr.write(`auto-commit-push: not committing possible secrets: ${secrets.join(", ")}\n`);
+  const held = branch === defaultBranch ? secrets : [...secrets, ...staged.filter((f) => f === PROMPT_LOG)];
+  if (held.length) git("reset", "-q", "--", ...held); // unstage only; the files stay on disk untouched
+  const files = staged.filter((f) => !held.includes(f));
 
   if (files.length) {
     const summary = files.length <= 3 ? files.join(", ") : `${files.slice(0, 3).join(", ")} and ${files.length - 3} more`;
@@ -47,7 +49,7 @@ function main() {
   const upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
   const ahead = upstream.status === 0 ? Number(git("rev-list", "--count", "@{u}..HEAD").stdout.trim()) : 1;
   if (!ahead) return;
-  const push = git("push", "origin", branch);
+  const push = upstream.status === 0 ? git("push", "origin", branch) : git("push", "-u", "origin", branch);
   if (push.status !== 0) return fail(`push failed: ${push.stderr.trim().split("\n").pop()}`);
 }
 
