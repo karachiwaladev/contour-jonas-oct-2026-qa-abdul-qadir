@@ -43,14 +43,16 @@ README.md                  ← workshop info (scoring, schedule)
 
 Use the `factory-loop` skill (`/factory-loop`, or `/loop 1m /factory-loop`). It:
 claims the issue with 👀 → for build work, asks clarifying questions → plans and
-gets approval → builds → verifies in Chrome (DevTools Protocol) with screenshots
-→ commits, pushes and comments on the issue. Never destructive. Details are in the skill.
+gets approval → builds on a `ticket-<T>-<slug>` branch → verifies in Chrome (DevTools
+Protocol) with screenshots → opens a PR (`Closes #N`) and comments on the issue.
+Never destructive. Details are in the skill.
 
 ## Ground rules
 
 - This is a training repo: no Jonas or Contour code, and no real keys or secrets.
-- Push to `main`; small, focused commits that name the ticket (e.g. `Ticket #3: ...`).
-- On every stop, a hook commits and pushes any remaining changes.
+- Each work ticket gets its own branch and PR into `main`; small, focused commits that name
+  the ticket (e.g. `Ticket #3: ...`). Scoring counts `main`, so PRs need merging to count.
+- On every stop, a hook commits and pushes any remaining changes on the current branch.
 
 ## Index
 
