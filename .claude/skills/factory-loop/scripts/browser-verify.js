@@ -67,10 +67,18 @@ async function launchChrome(profile, width, height) {
     `--user-data-dir=${profile}`, "--remote-debugging-port=0", `--window-size=${width},${height}`, "about:blank",
   ], { stdio: "ignore" });
   const portFile = path.join(profile, "DevToolsActivePort");
-  for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) await sleep(100);
-  if (!fs.existsSync(portFile)) throw new Error("Chrome did not start (no DevToolsActivePort)");
-  const port = fs.readFileSync(portFile, "utf8").split("\n")[0].trim();
-  return { proc, port };
+  // Chrome creates the file before writing it and may hold it locked (EBUSY on Windows), so poll
+  // until it can be read and holds a port number.
+  for (let i = 0; i < 100; i++) {
+    try {
+      const port = fs.readFileSync(portFile, "utf8").split("\n")[0].trim();
+      if (/^\d+$/.test(port)) return { proc, port };
+    } catch (err) {
+      if (!["ENOENT", "EBUSY", "EPERM"].includes(err.code)) throw err;
+    }
+    await sleep(100);
+  }
+  throw new Error("Chrome did not start (no readable DevToolsActivePort)");
 }
 
 function cdp(wsUrl) {

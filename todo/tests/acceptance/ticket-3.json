@@ -1,0 +1,38 @@
+{
+  "ticket": 3,
+  "issue": 4,
+  "criteria": [
+    {
+      "id": "AC1",
+      "quote": "a todo app with a simple interface",
+      "files": ["index.html", "app.js", "styles.css"],
+      "checks": ["empty state shown when there are no tasks", "empty state hidden once tasks exist", "no error message shown"]
+    },
+    {
+      "id": "AC2",
+      "quote": "using a client side db",
+      "checks": ["changes are persisted in IndexedDB"],
+      "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource"
+    },
+    {
+      "id": "AC3",
+      "quote": "create a task",
+      "checks": ["create a task", "create a second task", "blank titles are ignored", "task titles render as text, not HTML"]
+    },
+    {
+      "id": "AC4",
+      "quote": "mark it done",
+      "checks": ["mark a task done", "summary counts remaining tasks", "mark a task not done again"]
+    },
+    {
+      "id": "AC5",
+      "quote": "delete it",
+      "checks": ["delete a task"]
+    },
+    {
+      "id": "AC6",
+      "quote": "Create it in todo folder",
+      "files": ["index.html", "CLAUDE.md"]
+    }
+  ]
+}

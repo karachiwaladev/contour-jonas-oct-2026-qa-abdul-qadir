@@ -1,0 +1,66 @@
+{
+  "ticket": 5,
+  "issue": 7,
+  "criteria": [
+    {
+      "id": "AC1",
+      "quote": "create recurring tasks for my todo app",
+      "checks": [
+        "interval field is disabled until a repeat is chosen",
+        "repeating task shows its schedule",
+        "form resets to 'Does not repeat' after adding",
+        "repeating task without a date defaults to due today",
+        "singular label for an interval of 1",
+        "completing a repeating task creates the next occurrence",
+        "completed occurrence stays as done history",
+        "next occurrence is open, on schedule, with the same tags and repeat",
+        "un-ticking and re-ticking does not create a duplicate"
+      ]
+    },
+    {
+      "id": "AC2",
+      "quote": "Everything should work on client side",
+      "checks": ["repeat rules are persisted"],
+      "absent": "fetch\\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource"
+    },
+    {
+      "id": "AC3",
+      "source": "clarified",
+      "requirement": "Repeat every N days, weeks, months or years",
+      "checks": [
+        "daily: next day",
+        "every 3 days crosses a month boundary",
+        "weekly: +7 days",
+        "every 2 weeks: +14 days",
+        "monthly keeps the day of month",
+        "monthly on the 31st clamps to the last day of February",
+        "monthly returns to the 31st after a short month",
+        "every 3 months rolls over the year",
+        "yearly: same date next year",
+        "yearly on Feb 29 falls on Feb 28 in non-leap years",
+        "interval is clamped to 1..99"
+      ]
+    },
+    {
+      "id": "AC4",
+      "source": "clarified",
+      "requirement": "The next date follows the schedule, not the day it was completed",
+      "checks": ["overdue schedule skips ahead to today or later", "next date is today when the schedule lands on today"]
+    },
+    {
+      "id": "AC5",
+      "source": "clarified",
+      "requirement": "A task repeats until its repeat is edited",
+      "checks": [
+        "edit form shows the current repeat",
+        "editing changes the repeat",
+        "'Does not repeat' stops repeating",
+        "'Does not repeat' gives no rule",
+        "completing a non-repeating task creates nothing new"
+      ]
+    }
+  ],
+  "context": [
+    { "quote": "Enhance my todo app", "reason": "names the existing project to extend (todo/); the asks follow" }
+  ]
+}
