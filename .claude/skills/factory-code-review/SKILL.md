@@ -34,8 +34,7 @@ confirm every item yourself before acting on it.
   truly needed, it gets mentioned in the PR.
 
 **Correctness**
-- Logic errors, off-by-one errors, and boundary values (empty, 0, max, dates at month or year
-  boundaries, time zones).
+- Boundary values this repo hits: empty input, dates at month or year ends, time zones.
 - Async ordering and races, such as stale closures, double submits and awaits that are never
   made. State changes go through the project's single write path (e.g. todo's `run()`).
 - Error paths: failures are shown or handled, never swallowed silently, and the app never

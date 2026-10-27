@@ -1,0 +1,25 @@
+Skills loaded this session
+
+  skill                                            source             context  7d tokens   uses  last used
+  factory-code-review                              projectSettings       ~260          -     0×  never
+  factory-security-review                          projectSettings       ~230          -     0×  never
+  claude-code-setup:claude-automation-recommender  claude-code-setup     ~140          -     0×  never
+  anthropic-skills:docs                            claude.ai sync        ~340          -     0×  never
+  anthropic-skills:excel-to-xml-for-testlink       claude.ai sync        ~140          -     0×  never
+  anthropic-skills:google-workspace                claude.ai sync        ~330          -     0×  never
+  anthropic-skills:import-memory                   claude.ai sync         ~60          -     0×  never
+  anthropic-skills:pdf                             claude.ai sync        ~150          -     0×  never
+  anthropic-skills:pptx                            claude.ai sync        ~330          -     0×  never
+  anthropic-skills:bulk-import-buddy               claude.ai sync        ~320          -     1×  34 days
+  anthropic-skills:xlsx                            claude.ai sync        ~320          -     3×  34 days
+  anthropic-skills:docx                            claude.ai sync        ~320          -     1×  33 days
+  anthropic-skills:skill-creator                   claude.ai sync        ~120     498.1k     2×  1 day
+  factory-loop                                     projectSettings       ~300     163.1m   199×  today
+
+  context = this skill's one-line listing in the system prompt, included every turn
+  (dash = not in the current listing, costs nothing; full SKILL.md loads only when it runs)
+  7d tokens = tokens attributed to the skill over the last 7 days of sessions on this machine
+
+2 skills loaded but never invoked. Each one adds to the system prompt every turn. Disable in /skills, or remove from .claude/skills.
+6 skills synced from claude.ai loaded but never invoked. Each one adds to the system prompt every turn. Disable in /skills, or turn them off on claude.ai — a deleted synced copy is re-downloaded on the next sync.
+1 plugin skill loaded but never invoked, from claude-code-setup. Each one adds to the system prompt every turn. Plugin skills can't be turned off individually — disable the plugin in /plugin.

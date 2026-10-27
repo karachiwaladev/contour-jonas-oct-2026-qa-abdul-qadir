@@ -2,8 +2,8 @@
 
 This repo is a **software factory**. Work arrives as GitHub issues (`Ticket #1`,
 `Ticket #2`, ...), an agent loop picks each ticket up and does the work, and the
-results are pushed to `main`. Humans build and improve the loop rather than the
-features. Only what is on GitHub counts: files, issues, comments and commits.
+results reach `main` through reviewed pull requests. Humans build and improve the loop
+rather than the features. Only what is on GitHub counts: files, issues, comments and commits.
 
 > **Keep this file under 100 lines at all times.** It is the entry point and the
 > index, not the manual. Detail belongs in the files it links to.
@@ -46,13 +46,22 @@ claims the issue with 👀 → for build work, asks clarifying questions → pla
 gets approval → builds on a `ticket-<T>-<slug>` branch → verifies in Chrome (DevTools
 Protocol) with screenshots → code review + security review → opens a PR (`Closes #N`),
 comments on the issue → waits for manual review before merging. Never destructive.
+A step is done only when a human can open its proof (PR, CI run, evidence pack, report): say
+where it is, never just that it passed.
 
 ## Ground rules
 
 - This is a training repo: no Jonas or Contour code, and no real keys or secrets.
 - Each work ticket gets its own branch and PR into `main`; small, focused commits that name
   the ticket (e.g. `Ticket #3: ...`). Scoring counts `main`, so PRs need merging to count.
-- On every stop, a hook commits and pushes any remaining changes on the current branch.
+- On every stop, a hook commits any remaining changes on the current branch and pushes
+  them only if the security scan passes.
+- If a reply could mean more than one thing ("reviewed", "this file"), ask which before
+  acting, and end every approval request with the exact reply that approves it.
+- Numbers in a request are targets unless the user says "at most"; before removing anything
+  outside the repo, list what depends on it and ask.
+- Windows/Git Bash: set `MSYS_NO_PATHCONV=1` when an argument starts with `/` or is `rev:path`;
+  there is no Python; write commit messages to a BOM-free file; no git worktrees under OneDrive.
 
 ## Index
 
