@@ -134,6 +134,45 @@ function manifestProblems(manifest, files) {
   return problems;
 }
 
+// Groups failure traces (cdp-trace.js) by what caused them. runs = [{ dir, mutation?: { id, code }, traces }],
+// with dir the run's folder in the evidence root and traces its traces.jsonl rows.
+//   - In a mutation run the cause is known: the feature broken on purpose. One group per run; its
+//     first failure is the direct hit and the rest are knock-on failures.
+//   - In a normal run, failures group by kind: console errors and crashes by their message, refused
+//     input by its message, and assertions by the last trusted input before them (the action that
+//     led to the failure).
+// Returns groups in the order they first happened, unexpected ones (normal runs) first.
+function groupFailures(runs) {
+  const groups = new Map();
+  const firstLine = (s) => String(s || "").split("\n")[0].slice(0, 200);
+  for (const run of runs) {
+    for (const tr of run.traces || []) {
+      let key;
+      let cause;
+      if (run.mutation) {
+        key = `mutation:${run.mutation.id}`;
+        cause = `${run.mutation.id} broken on purpose: \`${run.mutation.code.trim()}\``;
+      } else if (tr.kind === "assertion") {
+        const last = (tr.lastInputs || []).slice(-1)[0];
+        cause = last ? `checks failed after ${last.action === "type" ? "typing into" : "clicking"} ${last.tag} "${last.label}"` : "checks failed before any input";
+        key = `assertion:${cause}`;
+      } else {
+        const label = { "console-error": "console error", "script-threw": "the script crashed", "input-refused": "trusted input was refused" }[tr.kind] || tr.kind;
+        cause = `${label}: ${firstLine(tr.message)}`;
+        key = `${tr.kind}:${cause}`;
+      }
+      if (!groups.has(key)) groups.set(key, { cause, kind: run.mutation ? "mutation" : tr.kind, expected: !!run.mutation, run: run.dir, failures: [] });
+      const at = (file) => (file ? `${run.dir}/${file}` : null);
+      groups.get(key).failures.push({
+        check: tr.check, message: tr.message, details: tr.details, video: tr.video,
+        screenshot: at(tr.files && tr.files.screenshot), dom: at(tr.files && tr.files.dom),
+      });
+    }
+  }
+  const all = [...groups.values()];
+  return [...all.filter((g) => !g.expected), ...all.filter((g) => g.expected)];
+}
+
 // How many console messages each source produced (see cdp-evidence.js for the labels).
 const consoleBySource = (rows) => (rows || []).reduce((acc, r) => ({ ...acc, [r.source]: (acc[r.source] || 0) + 1 }), {});
 
@@ -203,6 +242,6 @@ function prEvidence(body, issue) {
 }
 
 module.exports = {
-  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy, externalRequests, manifestProblems, consoleBySource,
+  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy, externalRequests, manifestProblems, groupFailures, consoleBySource,
   pngInfo, screenshotProblems, prEvidence, MAX_QUOTE_WORDS, MAX_CONTEXT_WORDS,
 };

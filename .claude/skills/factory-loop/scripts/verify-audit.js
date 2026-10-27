@@ -31,6 +31,7 @@ const path = require("path");
 const lib = require("./audit-lib");
 const io = require("./audit-io");
 const { report } = require("./audit-report");
+const { failuresPage } = require("./failure-report");
 
 function parseArgs(argv) {
   const args = {};
@@ -90,6 +91,19 @@ function checkMutations(f, projectDir) {
     f.blockers.push(threw ? `${c.id}: its mutation crashed instead of breaking the feature (${threw})`
       : `${c.id}: all its checks still pass with the feature broken (\`${c.mutation.trim()}\`), so they don't prove it`);
   }
+}
+
+// Every failure trace from the fresh run and the mutation runs, grouped by cause (lib.groupFailures).
+// With --evidence, failures.html in the evidence folder shows each group with its screenshots.
+function groupTraces(f) {
+  const rel = (dir) => path.relative(f.evidenceRoot, dir).replace(/\\/g, "/");
+  const runs = [];
+  if (f.run?.evidence) runs.push({ dir: rel(f.run.evidence.dir), traces: f.run.evidence.traces });
+  for (const c of f.criteria || []) {
+    if (c.mutationRun?.evidence) runs.push({ dir: rel(c.mutationRun.evidence.dir), mutation: { id: c.id, code: c.mutation }, traces: c.mutationRun.evidence.traces });
+  }
+  f.failureGroups = lib.groupFailures(runs);
+  if (f.evidenceKept) fs.writeFileSync(path.join(f.evidenceRoot, "failures.html"), failuresPage(f));
 }
 
 function checkPr(f, pr, repoRoot) {
@@ -153,6 +167,7 @@ function audit(args) {
     if (acc.criteria) checkTicket(f, ticket, acc);
     checkRun(f, projectDir, acc);
     checkMutations(f, projectDir);
+    groupTraces(f);
     checkEvidence(f, projectDir, pr, repoRoot);
     return f;
   } finally {

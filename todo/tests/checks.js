@@ -4,6 +4,12 @@
 
 const out = (window.__checkResults = []); // published so a crash still reports what ran (see browser-verify.js)
 const check = (name, ok) => out.push(`${ok ? "PASS" : "FAIL"} ${name}`);
+// Like check(), and on failure it records what was expected and what the page showed, for the
+// failure trace (see cdp-trace.js). Record the details before the result, which triggers the trace.
+const checkEqual = (name, actual, expected) => {
+  if (actual !== expected) (window.__checkDetails ||= {})[name] = { expected, actual };
+  check(name, actual === expected);
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Poll until the UI reaches the expected state (IndexedDB work is asynchronous).
 const waitFor = async (cond) => {
@@ -64,7 +70,7 @@ await sleep(200);
 check("blank titles are ignored", items().length === 2);
 await trusted.click(find("Buy milk").querySelector("input[type=checkbox]"));
 check("mark a task done", await waitFor(() => find("Buy milk").classList.contains("done")));
-check("summary counts remaining tasks", summary.textContent === "1 of 2 remaining");
+checkEqual("summary counts remaining tasks", summary.textContent, "1 of 2 remaining");
 await trusted.click(find("<b>Write report</b>").querySelector(".delete"));
 check("delete a task", (await waitFor(() => items().length === 1)) && titles()[0] === "Buy milk");
 let stored = await taskStore.all(await openDb());
@@ -86,7 +92,7 @@ check("due date is shown on the task", rent.querySelector(".due").textContent.st
 check("past-due incomplete task is marked Overdue", rent.classList.contains("overdue") && rent.querySelector(".badge.overdue")?.textContent === "Overdue");
 check("task due today is marked Due today", find("Call bank").querySelector(".badge.due-today")?.textContent === "Due today");
 check("future and undated tasks have no badge", !find("Plan trip").querySelector(".badge") && !find("Read book").querySelector(".badge"));
-check("tasks sort by due date, undated last", titles().join("|") === "Pay rent|Call bank|Plan trip|Read book");
+checkEqual("tasks sort by due date, undated last", titles().join("|"), "Pay rent|Call bank|Plan trip|Read book");
 await trusted.click(rent.querySelector("input[type=checkbox]"));
 check("completed tasks are never flagged overdue", await waitFor(() => find("Pay rent").classList.contains("done") && !find("Pay rent").querySelector(".badge")));
 
@@ -101,10 +107,10 @@ await waitFor(() => !find("Tag test"));
 
 // ---- Status filter ----
 await clickStatus("done");
-check("Completed filter shows only completed tasks", titles().join("|") === "Pay rent");
+checkEqual("Completed filter shows only completed tasks", titles().join("|"), "Pay rent");
 await clickStatus("active");
-check("Incomplete filter shows only incomplete tasks", titles().join("|") === "Call bank|Plan trip|Read book|Fix bug");
-check("summary notes how many are shown when filtered", summary.textContent === "4 of 5 remaining · showing 4");
+checkEqual("Incomplete filter shows only incomplete tasks", titles().join("|"), "Call bank|Plan trip|Read book|Fix bug");
+checkEqual("summary notes how many are shown when filtered", summary.textContent, "4 of 5 remaining · showing 4");
 await clickStatus("all");
 check("All filter shows every task", items().length === 5 && summary.textContent === "4 of 5 remaining");
 
@@ -113,7 +119,7 @@ await trusted.click(tagFilter.querySelector('[data-tag="home"]'));
 check("clicking a tag shows only tasks with that tag", await waitFor(() => titles().join("|") === "Pay rent|Call bank"));
 check("selected tag chip is marked pressed", tagFilter.querySelector('[data-tag="home"]').getAttribute("aria-pressed") === "true");
 await clickStatus("active");
-check("tag filter combines with the status filter", titles().join("|") === "Call bank");
+checkEqual("tag filter combines with the status filter", titles().join("|"), "Call bank");
 await clickStatus("done");
 await trusted.click(tagFilter.querySelector('[data-tag="home"]'));
 await tagSettled(null);
@@ -258,10 +264,10 @@ check("priority select resets to Medium after adding", priorityInput.value === "
 await addWithPriority("Tidy desk", "low", today, "home");
 check("new task form sets the priority", (await storedTask("Tidy desk"))?.priority === "low" && priorityChip(find("Tidy desk"))?.textContent === "Low");
 await add("Plan meeting", today, "work");
-check("same due date: High sorts before Medium before Low", titles().join("|") === "Fix outage|Plan meeting|Tidy desk|Default task");
+checkEqual("same due date: High sorts before Medium before Low", titles().join("|"), "Fix outage|Plan meeting|Tidy desk|Default task");
 await addWithPriority("Someday idea", "high");
 await addWithPriority("Old bill", "low", shift(-1));
-check("due date still sorts before priority", titles().join("|") === "Old bill|Fix outage|Plan meeting|Tidy desk|Someday idea|Default task");
+checkEqual("due date still sorts before priority", titles().join("|"), "Old bill|Fix outage|Plan meeting|Tidy desk|Someday idea|Default task");
 
 // One done task per priority level involved, so the status half of the combination is really tested.
 await trusted.click(find("Old bill").querySelector("input[type=checkbox]"));
@@ -269,8 +275,8 @@ await waitFor(() => find("Old bill").classList.contains("done"));
 await trusted.click(find("Someday idea").querySelector("input[type=checkbox]"));
 await waitFor(() => find("Someday idea").classList.contains("done"));
 await clickPriority("high");
-check("priority filter shows only tasks of that priority", titles().join("|") === "Fix outage|Someday idea");
-check("summary notes how many are shown when a priority filter is on", summary.textContent === "4 of 6 remaining · showing 2");
+checkEqual("priority filter shows only tasks of that priority", titles().join("|"), "Fix outage|Someday idea");
+checkEqual("summary notes how many are shown when a priority filter is on", summary.textContent, "4 of 6 remaining · showing 2");
 await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
 await tagSettled("work");
 const highAndWork = titles().join("|");
@@ -294,7 +300,7 @@ editForm.querySelector(".edit-priority").value = "high";
 await trusted.click(editForm.querySelector(".save"));
 check("editing changes the priority and persists it",
   (await waitFor(() => priorityChip(find("Tidy desk"))?.textContent === "High")) && (await storedTask("Tidy desk"))?.priority === "high");
-check("an edited priority re-sorts the task", titles().join("|") === "Old bill|Fix outage|Tidy desk|Plan meeting|Someday idea|Default task");
+checkEqual("an edited priority re-sorts the task", titles().join("|"), "Old bill|Fix outage|Tidy desk|Plan meeting|Someday idea|Default task");
 
 priorityInput.value = "high";
 await addRepeating("Weekly report", today, "week", 1);

@@ -68,7 +68,7 @@ function readEvidence(dir, printedSha256) {
   const problems = lib.manifestProblems(manifest, onDisk);
   if (problems.length) throw new AuditError(`evidence pack ${dir} doesn't match its manifest: ${problems.join("; ")}`);
   const read = (name) => readJsonl(path.join(dir, name));
-  return { dir, manifestSha256, manifest, network: read("network.jsonl"), egress: read("egress.jsonl"), console: read("console.jsonl") };
+  return { dir, manifestSha256, manifest, network: read("network.jsonl"), egress: read("egress.jsonl"), console: read("console.jsonl"), traces: read("traces.jsonl") };
 }
 
 // One fresh headless-Chrome run of checks.js that records an evidence pack in evidenceDir,
