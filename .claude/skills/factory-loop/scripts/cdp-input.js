@@ -41,7 +41,8 @@ async function locate(client, selector) {
     if (!el) return { error: "element not found" };
     el.removeAttribute("data-trusted-target");
     el.scrollIntoView({ block: "center", inline: "center" });
-    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // setTimeout, not requestAnimationFrame: headless Chrome can stop producing frames on an idle page.
+    const frames = () => new Promise((r) => setTimeout(r, 40));
     let r = el.getBoundingClientRect();
     for (let i = 0; i < 20; i++) {
       await frames();
@@ -56,18 +57,35 @@ async function locate(client, selector) {
     return { x, y, tag: el.tagName.toLowerCase(),
       label: el.getAttribute("aria-label") || (el.textContent || el.value || "").trim().slice(0, 60) };
   })()`;
-  const { result } = await client.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  const { result } = await send(client, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
   if (!result.value || result.value.error) throw new Error(`${result.value ? result.value.error : "no result"} (${selector})`);
   return result.value;
 }
 
 async function mouseClick(client, { x, y }) {
-  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+    trace("  dispatch", type, Math.round(x), Math.round(y));
+    await send(client, "Input.dispatchMouseEvent", { type, x, y, ...(type === "mouseMoved" ? {} : { button: "left", clickCount: 1 }) });
+  }
+  trace("  clicked");
+}
+
+// BV_DEBUG=1 traces every input step on stderr (to diagnose a hanging run).
+const trace = (...parts) => process.env.BV_DEBUG && process.stderr.write(`[input ${new Date().toISOString()}] ${parts.join(" ")}\n`);
+
+// Every input step gets a deadline, so Chrome not acknowledging one fails the action with a clear
+// message instead of hanging the whole run.
+const STEP_TIMEOUT_MS = 15000;
+function send(client, method, params) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Chrome didn't acknowledge ${method} within ${STEP_TIMEOUT_MS / 1000}s`)), STEP_TIMEOUT_MS);
+  });
+  return Promise.race([client.send(method, params), deadline]).finally(() => clearTimeout(timer));
 }
 
 async function perform(client, req, evidence) {
+  trace(req.id, req.action, req.selector || req.label || "");
   if (req.action === "snapshot") {
     if (evidence) await evidence.dumpIndexedDb(req.label);
     return { ok: true };
@@ -76,8 +94,8 @@ async function perform(client, req, evidence) {
   await mouseClick(client, where);
   if (req.action === "type") {
     // Select what's there, then let Chrome insert the text as real keyboard input.
-    await client.send("Runtime.evaluate", { expression: "document.activeElement && document.activeElement.select && document.activeElement.select()" });
-    await client.send("Input.insertText", { text: req.text });
+    await send(client, "Runtime.evaluate", { expression: "document.activeElement && document.activeElement.select && document.activeElement.select()" });
+    await send(client, "Input.insertText", { text: req.text });
   }
   if (evidence) evidence.recordInput({ action: req.action, ...where, text: req.text });
   return { ok: true };
@@ -85,7 +103,7 @@ async function perform(client, req, evidence) {
 
 // Wires the binding and the page helpers. Call after the page has loaded, before the test runs.
 async function installTrustedInput(client, evidence) {
-  await client.send("Runtime.addBinding", { name: BINDING });
+  await send(client, "Runtime.addBinding", { name: BINDING });
   client.on(async (msg) => {
     if (msg.method !== "Runtime.bindingCalled" || msg.params.name !== BINDING) return;
     let req = {};
@@ -96,9 +114,9 @@ async function installTrustedInput(client, evidence) {
     } catch (err) {
       result = { error: err.message };
     }
-    await client.send("Runtime.evaluate", { expression: `window.__cdpInputDone(${Number(req.id)}, ${JSON.stringify(result)})` }).catch(() => {});
+    await send(client, "Runtime.evaluate", { expression: `window.__cdpInputDone(${Number(req.id)}, ${JSON.stringify(result)})` }).catch(() => {});
   });
-  await client.send("Runtime.evaluate", { expression: PAGE_HELPERS });
+  await send(client, "Runtime.evaluate", { expression: PAGE_HELPERS });
 }
 
 module.exports = { installTrustedInput };
