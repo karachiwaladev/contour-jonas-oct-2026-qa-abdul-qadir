@@ -67,6 +67,7 @@ comments on the issue → waits for manual review before merging. Never destruct
 | factory-security-review | [.claude/skills/factory-security-review/SKILL.md](.claude/skills/factory-security-review/SKILL.md) | Pre-PR secret/XSS/injection scan (`scripts/scan.js`) + threat review |
 | Stop hooks | [.claude/settings.json](.claude/settings.json) | Log prompts to `.claude/logs/prompts.jsonl`; auto commit, push only if the security scan passes |
 | god-object-guard | [.claude/hooks/god-object-guard.js](.claude/hooks/god-object-guard.js) | PostToolUse (Write/Edit): warns/blocks oversized, mixed-responsibility files (`factory-code-review/scripts/god-object.js`) |
+| command-guard | [.claude/hooks/command-guard.js](.claude/hooks/command-guard.js) | PreToolUse (Bash/PowerShell/Read/Grep): blocks `rm -rf`, force-push, download-into-shell and `.env` reads, backing up `permissions.deny` in settings.json; tests in `command-guard.test.js` |
 
 ### Project index
 
