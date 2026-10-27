@@ -135,5 +135,5 @@ function screenshots(projectDir, project, T) {
 const inCommit = (repoRoot, sha, file) => exec("git", ["cat-file", "-e", `${sha}:${file}`], { cwd: repoRoot }).status === 0;
 
 module.exports = {
-  AuditError, git, readJson, loadTicket, checkoutPr, runBrowser, runMutations, absentHits, fileExists, screenshots, inCommit,
+  AuditError, git, readJson, loadTicket, checkoutPr, readEvidence, runBrowser, runMutations, absentHits, fileExists, screenshots, inCommit,
 };

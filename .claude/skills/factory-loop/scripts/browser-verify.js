@@ -84,8 +84,10 @@ async function launchChrome(profile, width, height) {
     `--user-data-dir=${profile}`, "--remote-debugging-port=0", `--window-size=${width},${height}`,
     // WebRTC may only use the (egress) proxy, never direct UDP; see openPage.
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-    // Profile features that call Google from the app's context (search preconnect, autofill), which would
-    // otherwise show up in the egress log as if the app made them.
+    // Fewer profile features calling Google from the app's context (search preconnect, autofill).
+    // Whatever remains is refused by the egress proxy (CHROME_SERVICES). If a new Chrome calls home
+    // somewhere else, BV_NETLOG=<file> writes a net-log that shows which URL it was.
+    ...(process.env.BV_NETLOG ? [`--log-net-log=${process.env.BV_NETLOG}`] : []),
     "--disable-background-networking", "--disable-sync", "--disable-extensions", "--dns-prefetch-disable",
     "--disable-features=PreconnectToSearch,AutofillServerCommunication,OptimizationHints,Translate,NetworkTimeServiceQuerying,MediaRouter",
   ];
@@ -183,7 +185,7 @@ async function openPage(chrome, proxy, url, evidence) {
   await client.send("Page.enable");
   if (evidence) await evidence.attach(client);
   const loaded = new Promise((resolve) => client.on((msg) => msg.method === "Page.loadEventFired" && resolve()));
-  await sleep(500); // let tab-creation preconnects hit the closed proxy first (see egress-proxy.js)
+  await sleep(300); // let tab-creation preconnects hit the still-closed proxy (see egress-proxy.js)
   proxy.open();
   await client.send("Page.navigate", { url });
   await loaded;
