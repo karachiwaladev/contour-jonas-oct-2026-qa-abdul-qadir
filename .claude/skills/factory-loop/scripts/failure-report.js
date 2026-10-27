@@ -3,7 +3,7 @@
 
 const md = (s) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const label = (fl) => (fl.check ? `"${md(fl.check)}"` : md(fl.message || "(no message)"));
+const label = (fl) => (fl.check ? `"${md(fl.check)}"` : md(String(fl.message || "(no message)").split("\n")[0]));
 
 function detailText(fl) {
   const d = fl.details;
