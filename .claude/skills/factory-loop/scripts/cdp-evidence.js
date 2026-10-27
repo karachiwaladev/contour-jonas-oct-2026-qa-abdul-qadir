@@ -37,7 +37,7 @@ const HARNESS_PREFIX = "browser-verify-harness/";
 class Evidence {
   constructor(dir, { origin, exe, video, egress }) {
     Object.assign(this, { dir, origin, exe, video, frames: [], scripts: new Map(), fetchedScripts: new Set(),
-      log: { console: [], network: [], input: [], egress: egress || [] } });
+      log: { console: [], network: [], input: [], egress: egress || [] }, pending: [] });
     fs.mkdirSync(path.join(dir, video ? "frames" : ""), { recursive: true });
   }
 
@@ -139,6 +139,7 @@ function tick(){if(!on||!F.length)return;show();const cur=F[i],next=F[i+1];i=nex
 
   // Stops recording, writes the logs and a manifest that hashes every file; returns the manifest.
   async finish(meta) {
+    await Promise.allSettled(this.pending); // failure-trace screenshots still being written (cdp-trace.js)
     if (this.video) await this.client.send("Page.stopScreencast").catch(() => {});
     await this.dumpIndexedDb("end");
     for (const [name, rows] of Object.entries(this.log)) {
@@ -150,7 +151,8 @@ function tick(){if(!on||!F.length)return;show();const cur=F[i],next=F[i+1];i=nex
     const manifest = {
       ...meta, chrome: { product, revision, userAgent, binaries: chromeBinaries(this.exe) }, node: process.version,
       counts: { console: this.log.console.length, network: this.log.network.length, external: this.log.network.filter((r) => !r.local).length,
-        egress: this.log.egress.filter((r) => !r.refused).length, trustedInputs: this.log.input.length, frames: this.frames.length },
+        egress: this.log.egress.filter((r) => !r.refused).length, trustedInputs: this.log.input.length, frames: this.frames.length,
+        failureTraces: (this.log.traces || []).length },
       files,
     };
     const text = JSON.stringify(manifest, null, 2);

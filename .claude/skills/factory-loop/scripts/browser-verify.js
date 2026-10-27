@@ -20,6 +20,8 @@
 // --evidence    folder for an evidence pack recorded from Chrome's own events (cdp-evidence.js):
 //               console with sources, network, trusted inputs, IndexedDB, Chrome hash, manifest
 // --video 1     also record a screencast of the run into the evidence pack
+//               With --evidence, every FAIL also gets a trace (screenshot, DOM, recent inputs and
+//               console, video time) in traces/ and traces.jsonl; see cdp-trace.js.
 //
 // The test script gets `trusted` (cdp-input.js): click/type via real Chrome input, not .click().
 // The app's browser context reaches anything but loopback only through egress-proxy.js, which logs
@@ -36,6 +38,7 @@ const os = require("os");
 const path = require("path");
 const { Evidence, sha256File, HARNESS_PREFIX } = require("./cdp-evidence");
 const { installTrustedInput, TAKE_TRUSTED } = require("./cdp-input");
+const { Tracer, failureKind } = require("./cdp-trace");
 const { startEgressProxy } = require("./egress-proxy");
 
 if (typeof WebSocket === "undefined" && !process.execArgv.includes("--experimental-websocket")) {
@@ -190,8 +193,10 @@ async function openPage(chrome, proxy, url, evidence) {
   await client.send("Page.navigate", { url });
   await loaded;
   await installTrustedInput(client, evidence);
+  const tracer = evidence ? new Tracer(client, evidence) : null;
+  if (tracer) await tracer.install();
   console.log(`Loaded ${url}`);
-  return { browser, client, consoleErrors };
+  return { browser, client, consoleErrors, tracer };
 }
 
 const scriptInfo = (file) => (file ? { file: path.basename(file), sha256: sha256File(file) } : undefined);
@@ -204,7 +209,7 @@ async function sealEvidence(evidence, url, failed) {
       scripts: { test: scriptInfo(args.test), before: scriptInfo(args.before), setup: scriptInfo(args.setup) },
     });
     console.log(`EVIDENCE ${evidence.dir} manifest-sha256=${m.manifestSha256} trusted-inputs=${m.counts.trustedInputs} ` +
-      `requests=${m.counts.network} external=${m.counts.external} egress=${m.counts.egress} frames=${m.counts.frames}`);
+      `requests=${m.counts.network} external=${m.counts.external} egress=${m.counts.egress} frames=${m.counts.frames} traces=${m.counts.failureTraces}`);
   } catch (err) {
     console.log(`ERROR couldn't write the evidence pack: ${err.message}`);
   }
@@ -247,7 +252,7 @@ async function printPartialResults(client) {
 }
 
 // Runs --before, --test, --setup and --screenshot in order; returns true if anything failed.
-async function runSteps(client, consoleErrors) {
+async function runSteps({ client, consoleErrors, tracer }) {
   let failed = false;
   if (args.before) await evaluate(client, fs.readFileSync(args.before, "utf8"), "before");
   if (args.test) {
@@ -261,7 +266,10 @@ async function runSteps(client, consoleErrors) {
   if (args.setup) await evaluate(client, fs.readFileSync(args.setup, "utf8"), "setup");
   if (consoleErrors.length) {
     failed = true;
-    consoleErrors.forEach((e) => console.log(`FAIL console error: ${e}`));
+    for (const e of consoleErrors) {
+      console.log(`FAIL console error: ${e}`);
+      if (tracer) await tracer.recordHarness("console-error", e);
+    }
   }
   if (args.screenshot) await saveScreenshot(client, args.screenshot);
   return failed;
@@ -299,10 +307,12 @@ async function main() {
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (args.evidence) evidence = new Evidence(path.resolve(args.evidence), { origin, exe: chrome.exe, video: args.video === "1", egress });
     page = await openPage(chrome, proxy, url, evidence);
-    failed = await runSteps(page.client, page.consoleErrors);
+    failed = await runSteps(page);
   } catch (err) {
     // A script that throws is a failed check; anything else means the run itself broke.
-    console.log(`${/^(before|test|setup) threw/.test(err.message) ? "FAIL" : "ERROR"} ${err.message}`);
+    const threw = /^(before|test|setup) threw/.test(err.message);
+    console.log(`${threw ? "FAIL" : "ERROR"} ${err.message}`);
+    if (threw && page?.tracer) await page.tracer.recordHarness(failureKind(err.message), err.message);
   } finally {
     if (evidence && page) await sealEvidence(evidence, url, failed);
     if (page) { page.client.close(); page.browser.close(); }
