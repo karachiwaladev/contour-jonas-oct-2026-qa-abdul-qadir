@@ -1,0 +1,64 @@
+{
+  "ticket": 6,
+  "issue": 11,
+  "criteria": [
+    {
+      "id": "AC1",
+      "quote": "Add a priority attribute to the todo task",
+      "checks": [
+        "priority is stored with the task",
+        "priority is shown on the task as a chip",
+        "a repeating task's next occurrence keeps its priority"
+      ],
+      "mutation": "const n0 = normalize; normalize = (t) => ({ ...n0(t), priority: 'medium' });"
+    },
+    {
+      "id": "AC2",
+      "quote": "Configure the filters",
+      "checks": [
+        "priority filter shows only tasks of that priority",
+        "summary notes how many are shown when a priority filter is on",
+        "priority filter combines with the status and tag filters",
+        "Any priority clears the priority filter"
+      ],
+      "mutation": "priorityFilter.addEventListener('click', (e) => e.stopImmediatePropagation(), true);"
+    },
+    {
+      "id": "AC3",
+      "quote": "add",
+      "checks": ["new task form sets the priority", "priority select resets to Medium after adding"],
+      "mutation": "const add2 = taskStore.add; taskStore.add = (d, t) => add2(d, { ...t, priority: 'medium' });"
+    },
+    {
+      "id": "AC4",
+      "quote": "edit functionality as well",
+      "checks": ["edit form shows the current priority", "editing changes the priority and persists it"],
+      "mutation": "const upd2 = taskStore.update; taskStore.update = (d, t) => upd2(d, { ...t, priority: undefined });"
+    },
+    {
+      "id": "AC5",
+      "source": "clarified",
+      "requirement": "Three levels (High, Medium, Low); new tasks and tasks saved before priorities existed are Medium",
+      "checks": [
+        "priority select defaults to Medium",
+        "new tasks default to Medium priority",
+        "tasks saved before priorities existed show as Medium"
+      ],
+      "mutation": "const pp0 = parsePriority; parsePriority = (v) => (v ? pp0(v) : 'low');"
+    },
+    {
+      "id": "AC6",
+      "source": "clarified",
+      "requirement": "Sort stays due date first; on the same date, priority breaks the tie (High first)",
+      "checks": [
+        "same due date: High sorts before Medium before Low",
+        "due date still sorts before priority",
+        "an edited priority re-sorts the task"
+      ],
+      "mutation": "compareTasks = (a, b) => (a.dueDate === b.dueDate ? a.createdAt - b.createdAt : !a.dueDate ? 1 : !b.dueDate ? -1 : a.dueDate < b.dueDate ? -1 : 1);"
+    }
+  ],
+  "context": [
+    { "quote": "Enhance todo app.", "reason": "names the existing project to extend (todo/); the asks follow" }
+  ]
+}

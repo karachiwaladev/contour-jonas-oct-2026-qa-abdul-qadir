@@ -29,8 +29,8 @@ function withStore(db, mode, fn) {
 const taskStore = {
   all: (db) => withStore(db, "readonly", (s) => s.getAll()),
   get: (db, id) => withStore(db, "readonly", (s) => s.get(id)),
-  add: (db, { title, dueDate = null, tags = [], repeat = null }) =>
-    withStore(db, "readwrite", (s) => s.add({ title, done: false, dueDate, tags, repeat, createdAt: Date.now() })),
+  add: (db, { title, dueDate = null, tags = [], repeat = null, priority = DEFAULT_PRIORITY }) =>
+    withStore(db, "readwrite", (s) => s.add({ title, done: false, dueDate, tags, repeat, priority, createdAt: Date.now() })),
   update: (db, task) => withStore(db, "readwrite", (s) => s.put(task)),
   remove: (db, id) => withStore(db, "readwrite", (s) => s.delete(id)),
 };

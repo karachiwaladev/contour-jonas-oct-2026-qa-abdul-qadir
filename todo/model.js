@@ -76,17 +76,35 @@ function formatDate(iso) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-// Tasks saved before due dates, tags and repeats existed lack those fields.
-function normalize(task) {
-  return { ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [], repeat: task.repeat || null };
+// ---- Priority ----
+
+const PRIORITIES = ["high", "medium", "low"]; // highest first: the index is the sort rank
+const DEFAULT_PRIORITY = "medium";
+
+// Any stored or form value → a known priority. Missing or unknown values are Medium.
+function parsePriority(value) {
+  return PRIORITIES.includes(value) ? value : DEFAULT_PRIORITY;
 }
 
-// Earliest due date first, undated tasks last, ties in creation order.
+function priorityLabel(priority) {
+  return priority[0].toUpperCase() + priority.slice(1);
+}
+
+// Tasks saved before due dates, tags, repeats and priorities existed lack those fields.
+function normalize(task) {
+  return {
+    ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [],
+    repeat: task.repeat || null, priority: parsePriority(task.priority),
+  };
+}
+
+// Earliest due date first, undated tasks last; same date: higher priority first, then creation order.
 function compareTasks(a, b) {
   if (a.dueDate !== b.dueDate) {
     if (!a.dueDate) return 1;
     if (!b.dueDate) return -1;
     return a.dueDate < b.dueDate ? -1 : 1;
   }
-  return a.createdAt - b.createdAt;
+  const rank = PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority);
+  return rank || a.createdAt - b.createdAt;
 }

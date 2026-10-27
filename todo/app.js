@@ -13,7 +13,7 @@ async function setDone(staleTask, done) {
   if (done && task.repeat && !task.nextCreated) {
     updated.nextCreated = true;
     const dueDate = nextDueDate(task.dueDate || todayISO(), task.repeat);
-    await taskStore.add(db, { title: task.title, dueDate, tags: task.tags, repeat: task.repeat });
+    await taskStore.add(db, { title: task.title, dueDate, tags: task.tags, repeat: task.repeat, priority: task.priority });
   }
   await taskStore.update(db, updated);
 }
@@ -24,7 +24,9 @@ const dueInput = document.getElementById("new-task-due");
 const tagsInput = document.getElementById("new-task-tags");
 const repeatUnitInput = document.getElementById("new-task-repeat");
 const repeatEveryInput = document.getElementById("new-task-every");
+const priorityInput = document.getElementById("new-task-priority");
 const statusFilter = document.getElementById("status-filter");
+const priorityFilter = document.getElementById("priority-filter");
 const tagFilter = document.getElementById("tag-filter");
 const list = document.getElementById("task-list");
 const emptyState = document.getElementById("empty-state");
@@ -32,7 +34,7 @@ const summary = document.getElementById("summary");
 const errorBox = document.getElementById("error");
 
 // View state. Filters are not persisted; they reset on reload.
-const view = { status: "all", tag: null, editingId: null };
+const view = { status: "all", priority: null, tag: null, editingId: null };
 
 let db;
 
@@ -49,6 +51,7 @@ function el(tag, props = {}, children = []) {
 
 function renderMeta(task) {
   const meta = el("div", { className: "task-meta" });
+  meta.append(el("span", { className: `chip priority priority-${task.priority}`, textContent: priorityLabel(task.priority) }));
   if (task.dueDate) {
     meta.append(el("span", { className: "due", textContent: `Due ${formatDate(task.dueDate)}` }));
     const status = dueStatus(task);
@@ -79,16 +82,25 @@ function renderRepeatControls(repeat) {
   return { every, unit, wrapper: el("span", { className: "repeat-field" }, [el("span", { textContent: "Repeat every" }), every, unit]) };
 }
 
+// The priority select used by the edit form (the add form's is in index.html).
+function renderPrioritySelect(priority) {
+  const select = el("select", { className: "edit-priority" }, PRIORITIES.map((p) => el("option", { value: p, textContent: priorityLabel(p) })));
+  select.setAttribute("aria-label", "Priority");
+  select.value = priority;
+  return select;
+}
+
 function renderEditForm(task) {
   const due = el("input", { type: "date", value: task.dueDate || "", className: "edit-due" });
   due.setAttribute("aria-label", "Due date");
   const tags = el("input", { type: "text", value: task.tags.join(", "), placeholder: "work, urgent", className: "edit-tags" });
   tags.setAttribute("aria-label", "Tags");
+  const priority = renderPrioritySelect(task.priority);
   const repeatControls = renderRepeatControls(task.repeat);
   const save = el("button", { type: "submit", textContent: "Save", className: "save" });
   const cancel = el("button", { type: "button", textContent: "Cancel", className: "secondary cancel" });
 
-  const editForm = el("form", { className: "edit-form" }, [due, tags, repeatControls.wrapper, save, cancel]);
+  const editForm = el("form", { className: "edit-form" }, [due, tags, priority, repeatControls.wrapper, save, cancel]);
   editForm.addEventListener("submit", (event) => {
     event.preventDefault();
     view.editingId = null;
@@ -97,7 +109,7 @@ function renderEditForm(task) {
     const unit = repeatControls.unit.value;
     if (REPEAT_UNITS.includes(unit) && !dueDate) dueDate = todayISO();
     const repeat = parseRepeat(unit, repeatControls.every.value, dueDate);
-    run(() => taskStore.update(db, { ...task, dueDate, tags: parseTags(tags.value), repeat }));
+    run(() => taskStore.update(db, { ...task, dueDate, tags: parseTags(tags.value), repeat, priority: parsePriority(priority.value) }));
   });
   cancel.addEventListener("click", () => {
     view.editingId = null;
@@ -153,11 +165,14 @@ async function render() {
   const allTags = [...new Set(tasks.flatMap((t) => t.tags))].sort();
   if (view.tag && !allTags.includes(view.tag)) view.tag = null; // the tag's last task is gone
 
-  const visible = tasks.filter((t) =>
-    (view.status === "all" || (view.status === "done") === t.done) && (!view.tag || t.tags.includes(view.tag)));
+  const visible = tasks.filter((t) => (view.status === "all" || (view.status === "done") === t.done) &&
+    (!view.priority || t.priority === view.priority) && (!view.tag || t.tags.includes(view.tag)));
 
   for (const button of statusFilter.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.status === view.status));
+  }
+  for (const button of priorityFilter.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String((button.dataset.priority || null) === view.priority));
   }
   renderTagFilter(allTags);
   list.replaceChildren(...visible.map(renderTask));
@@ -165,7 +180,7 @@ async function render() {
   emptyState.hidden = visible.length > 0;
   emptyState.textContent = tasks.length ? "No tasks match these filters." : "No tasks yet. Add one above.";
   const remaining = tasks.filter((t) => !t.done).length;
-  const filtered = view.status !== "all" || view.tag;
+  const filtered = view.status !== "all" || view.priority || view.tag;
   summary.textContent = tasks.length
     ? `${remaining} of ${tasks.length} remaining${filtered ? ` · showing ${visible.length}` : ""}`
     : "";
@@ -190,7 +205,10 @@ form.addEventListener("submit", (event) => {
   const unit = repeatUnitInput.value;
   // A repeating task needs a due date to schedule from; default to today.
   const dueDate = dueInput.value || (REPEAT_UNITS.includes(unit) ? todayISO() : null);
-  const task = { title, dueDate, tags: parseTags(tagsInput.value), repeat: parseRepeat(unit, repeatEveryInput.value, dueDate) };
+  const task = {
+    title, dueDate, tags: parseTags(tagsInput.value), repeat: parseRepeat(unit, repeatEveryInput.value, dueDate),
+    priority: parsePriority(priorityInput.value),
+  };
   form.reset();
   syncRepeatEvery(repeatUnitInput, repeatEveryInput);
   run(() => taskStore.add(db, task));
@@ -203,6 +221,13 @@ statusFilter.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-status]");
   if (!button) return;
   view.status = button.dataset.status;
+  run();
+});
+
+priorityFilter.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-priority]");
+  if (!button) return;
+  view.priority = button.dataset.priority || null;
   run();
 });
 

@@ -42,7 +42,7 @@ const shift = (days) => {
 };
 const clear = async () => {
   for (const task of await taskStore.all(db)) await taskStore.remove(db, task.id);
-  Object.assign(view, { status: "all", tag: null, editingId: null });
+  Object.assign(view, { status: "all", priority: null, tag: null, editingId: null });
   await render();
 };
 
@@ -232,6 +232,71 @@ await sleep(150);
 check("completing a non-repeating task creates nothing new", (await taskStore.all(db)).filter((t) => t.title === "Stand-up notes").length === 1);
 stored = await taskStore.all(await openDb());
 check("repeat rules are persisted", stored.find((t) => t.title === "Water plants" && !t.done).repeat.unit === "week" && stored.find((t) => t.title === "Stand-up notes").repeat === null);
+
+await clear();
+
+// ---- Priority (Ticket #6) ----
+const priorityChip = (li) => li?.querySelector(".task-meta .chip.priority");
+const storedTask = async (title) => (await taskStore.all(await openDb())).find((t) => t.title === title);
+const addWithPriority = async (title, priority, due = "", tags = "") => {
+  priorityInput.value = priority; // a native select: set directly, like the date fields
+  await add(title, due, tags);
+};
+const clickPriority = async (priority) => {
+  const button = priorityFilter.querySelector(`[data-priority="${priority}"]`);
+  await trusted.click(button);
+  await waitFor(() => button.getAttribute("aria-pressed") === "true");
+  await sleep(50);
+};
+check("priority select defaults to Medium", priorityInput.value === "medium");
+await add("Default task");
+check("new tasks default to Medium priority", (await storedTask("Default task"))?.priority === "medium" && priorityChip(find("Default task"))?.textContent === "Medium");
+await addWithPriority("Fix outage", "high", today, "work");
+check("priority is stored with the task", (await storedTask("Fix outage"))?.priority === "high");
+check("priority is shown on the task as a chip", priorityChip(find("Fix outage"))?.textContent === "High" && priorityChip(find("Fix outage")).classList.contains("priority-high"));
+check("priority select resets to Medium after adding", priorityInput.value === "medium");
+await addWithPriority("Tidy desk", "low", today, "home");
+check("new task form sets the priority", (await storedTask("Tidy desk"))?.priority === "low" && priorityChip(find("Tidy desk"))?.textContent === "Low");
+await add("Plan meeting", today, "work");
+check("same due date: High sorts before Medium before Low", titles().join("|") === "Fix outage|Plan meeting|Tidy desk|Default task");
+await addWithPriority("Someday idea", "high");
+await addWithPriority("Old bill", "low", shift(-1));
+check("due date still sorts before priority", titles().join("|") === "Old bill|Fix outage|Plan meeting|Tidy desk|Someday idea|Default task");
+
+await clickPriority("high");
+check("priority filter shows only tasks of that priority", titles().join("|") === "Fix outage|Someday idea");
+check("summary notes how many are shown when a priority filter is on", summary.textContent === "6 of 6 remaining · showing 2");
+await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
+await tagSettled("work");
+const highAndWork = titles().join("|");
+await clickStatus("done");
+check("priority filter combines with the status and tag filters", highAndWork === "Fix outage" && items().length === 0);
+await clickStatus("all");
+await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
+await tagSettled(null);
+await clickPriority("");
+check("Any priority clears the priority filter", view.priority === null && items().length === 6);
+
+await trusted.click(find("Tidy desk").querySelector(".edit"));
+await waitFor(() => !!find("Tidy desk").querySelector(".edit-form"));
+editForm = find("Tidy desk").querySelector(".edit-form");
+check("edit form shows the current priority", editForm.querySelector(".edit-priority").value === "low");
+editForm.querySelector(".edit-priority").value = "high";
+await trusted.click(editForm.querySelector(".save"));
+check("editing changes the priority and persists it",
+  (await waitFor(() => priorityChip(find("Tidy desk"))?.textContent === "High")) && (await storedTask("Tidy desk"))?.priority === "high");
+check("an edited priority re-sorts the task", titles().join("|") === "Old bill|Fix outage|Tidy desk|Plan meeting|Someday idea|Default task");
+
+priorityInput.value = "high";
+await addRepeating("Weekly report", today, "week", 1);
+await trusted.click(find("Weekly report").querySelector("input[type=checkbox]"));
+await waitFor(() => items().filter((li) => li.querySelector(".task-title").textContent === "Weekly report").length === 2);
+const reports = (await taskStore.all(db)).filter((t) => t.title === "Weekly report");
+check("a repeating task's next occurrence keeps its priority", reports.length === 2 && reports.every((t) => t.priority === "high"));
+
+await taskStore.update(db, { title: "Legacy no priority", done: false, dueDate: null, tags: [], repeat: null, createdAt: Date.now() }); // old record shape
+await run();
+check("tasks saved before priorities existed show as Medium", priorityChip(find("Legacy no priority"))?.textContent === "Medium");
 
 await clear();
 check("empty state returns after clearing all tasks", !emptyState.hidden && emptyState.textContent.startsWith("No tasks yet"));
