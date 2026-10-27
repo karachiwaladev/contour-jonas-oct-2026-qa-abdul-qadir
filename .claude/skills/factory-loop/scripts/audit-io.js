@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const lib = require("./audit-lib");
+const { sha256File, listFiles } = require("./cdp-evidence");
 
 class AuditError extends Error {} // the audit itself couldn't run → exit 2
 
@@ -55,12 +56,19 @@ function checkoutPr(pr, repoRoot, project) {
 
 const readJsonl = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)) : []);
 
-// The parts of an evidence pack the audit reads back: manifest, network and console logs.
-function readEvidence(dir) {
+// Reads an evidence pack back, after checking it is the one the run sealed: the manifest's hash must
+// match the one browser-verify printed, and every file must match its hash in the manifest.
+function readEvidence(dir, printedSha256) {
   const manifestFile = path.join(dir, "manifest.json");
   if (!fs.existsSync(manifestFile)) throw new AuditError(`browser run left no evidence pack in ${dir}`);
-  const manifestSha256 = require("crypto").createHash("sha256").update(fs.readFileSync(manifestFile)).digest("hex");
-  return { dir, manifestSha256, manifest: readJson(manifestFile), network: readJsonl(path.join(dir, "network.jsonl")), console: readJsonl(path.join(dir, "console.jsonl")) };
+  const manifestSha256 = sha256File(manifestFile);
+  if (manifestSha256 !== printedSha256) throw new AuditError(`evidence pack ${dir}: manifest isn't the one the run printed (${printedSha256 || "none printed"})`);
+  const manifest = readJson(manifestFile);
+  const onDisk = Object.fromEntries(listFiles(dir).map((rel) => [rel, sha256File(path.join(dir, rel))]));
+  const problems = lib.manifestProblems(manifest, onDisk);
+  if (problems.length) throw new AuditError(`evidence pack ${dir} doesn't match its manifest: ${problems.join("; ")}`);
+  const read = (name) => readJsonl(path.join(dir, name));
+  return { dir, manifestSha256, manifest, network: read("network.jsonl"), egress: read("egress.jsonl"), console: read("console.jsonl") };
 }
 
 // One fresh headless-Chrome run of checks.js that records an evidence pack in evidenceDir,
@@ -74,7 +82,7 @@ function runBrowser(projectDir, { before, evidenceDir, video } = {}) {
   const run = lib.parseRun(r.stdout);
   if (run.errors.length) throw new AuditError(`browser run couldn't happen: ${run.errors.join("; ")}`);
   if (![0, 1].includes(r.status) || !run.result) throw new AuditError(`browser-verify crashed: ${(r.stderr || r.stdout || "").trim().slice(-400)}`);
-  return { ...run, exitCode: r.status, evidence: readEvidence(evidenceDir) };
+  return { ...run, exitCode: r.status, evidence: readEvidence(evidenceDir, run.manifestSha256) };
 }
 
 // Runs checks.js once per mutation (code in a temp file), each with its own evidence pack under

@@ -21,7 +21,9 @@
 //               console with sources, network, trusted inputs, IndexedDB, Chrome hash, manifest
 // --video 1     also record a screencast of the run into the evidence pack
 //
-// Test scripts get window.trusted (cdp-input.js): click/type via real Chrome input, not .click().
+// The test script gets `trusted` (cdp-input.js): click/type via real Chrome input, not .click().
+// The app's browser context reaches anything but loopback only through egress-proxy.js, which logs
+// every connection (pages, workers, service workers, WebSockets, WebRTC) as egress.jsonl.
 //
 // Chrome's profile goes in a short temp path: long Windows paths break IndexedDB
 // ("Internal error opening backing store"). Needs Node 22+, or Node 20 with
@@ -32,8 +34,9 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
-const { Evidence, sha256File } = require("./cdp-evidence");
-const { installTrustedInput } = require("./cdp-input");
+const { Evidence, sha256File, HARNESS_PREFIX } = require("./cdp-evidence");
+const { installTrustedInput, TAKE_TRUSTED } = require("./cdp-input");
+const { startEgressProxy } = require("./egress-proxy");
 
 if (typeof WebSocket === "undefined" && !process.execArgv.includes("--experimental-websocket")) {
   const r = spawnSync(process.execPath, ["--experimental-websocket", __filename, ...process.argv.slice(2)], { stdio: "inherit" });
@@ -79,9 +82,18 @@ async function launchChrome(profile, width, height) {
   const flags = [
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
     `--user-data-dir=${profile}`, "--remote-debugging-port=0", `--window-size=${width},${height}`,
+    // WebRTC may only use the (egress) proxy, never direct UDP; see openPage.
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    // Profile features that call Google from the app's context (search preconnect, autofill), which would
+    // otherwise show up in the egress log as if the app made them.
+    "--disable-background-networking", "--disable-sync", "--disable-extensions", "--dns-prefetch-disable",
+    "--disable-features=PreconnectToSearch,AutofillServerCommunication,OptimizationHints,Translate,NetworkTimeServiceQuerying,MediaRouter",
   ];
   // Ubuntu CI runners block Chrome's user-namespace sandbox; the page served there is the repo's own app.
   if (process.env.CI && process.platform === "linux") flags.push("--no-sandbox");
+  // No preconnects or prefetches: Chrome would otherwise warm up connections to its search engine.
+  fs.mkdirSync(path.join(profile, "Default"), { recursive: true });
+  fs.writeFileSync(path.join(profile, "Default", "Preferences"), JSON.stringify({ net: { network_prediction_options: 2 } }));
   const proc = spawn(exe, [...flags, "about:blank"], { stdio: "ignore" });
   const portFile = path.join(profile, "DevToolsActivePort");
   // Chrome creates the file before writing it and may hold it locked (EBUSY on Windows), so poll
@@ -126,9 +138,13 @@ function cdp(wsUrl) {
   };
 }
 
+// The test script receives the trusted-input API as its `trusted` parameter. It's handed over only
+// once, so if page code grabbed it first, the test fails instead of input being driven unnoticed.
 async function evaluate(client, source, label) {
+  const take = `(window.${TAKE_TRUSTED} || (() => { throw new Error("trusted input was taken before the test ran"); }))()`;
   const { result, exceptionDetails } = await client.send("Runtime.evaluate", {
-    expression: `(async () => {\n${source}\n})()`,
+    expression: (label === "test" ? `(async (trusted) => {\n${source}\n})(${take})` : `(async () => {\n${source}\n})()`) +
+      `\n//# sourceURL=${HARNESS_PREFIX}${label}.js`,
     awaitPromise: true,
     returnByValue: true,
   });
@@ -139,12 +155,25 @@ async function evaluate(client, source, label) {
   return result.value;
 }
 
+// Opens the app in its own browser context whose only route off the machine is the egress proxy, so
+// everything the app does (pages, workers, service workers, WebSockets) is logged there, while Chrome's
+// own background traffic (updates, sign-in) stays out of the log. The browser connection that owns
+// the context must stay open for the whole run.
+async function openAppTarget(chrome, proxy, width, height) {
+  const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${chrome.port}/json/version`)).json();
+  const browser = cdp(webSocketDebuggerUrl);
+  await browser.ready;
+  const { browserContextId } = await browser.send("Target.createBrowserContext", { proxyServer: `http://127.0.0.1:${proxy.address().port}` });
+  const { targetId } = await browser.send("Target.createTarget", { url: "about:blank", browserContextId, width, height });
+  const client = cdp(`ws://127.0.0.1:${chrome.port}/devtools/page/${targetId}`);
+  await client.ready;
+  return { browser, client };
+}
+
 // Connects to the page, records console errors (and the evidence pack, if any), loads the app and
 // installs trusted input for the test script.
-async function openPage(chrome, url, evidence) {
-  const targets = await (await fetch(`http://127.0.0.1:${chrome.port}/json/list`)).json();
-  const client = cdp(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
-  await client.ready;
+async function openPage(chrome, proxy, url, evidence) {
+  const { browser, client } = await openAppTarget(chrome, proxy, Number(args.width || 900), Number(args.height || 700));
   const consoleErrors = [];
   client.on((msg) => {
     if (msg.method === "Runtime.exceptionThrown") consoleErrors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
@@ -154,11 +183,13 @@ async function openPage(chrome, url, evidence) {
   await client.send("Page.enable");
   if (evidence) await evidence.attach(client);
   const loaded = new Promise((resolve) => client.on((msg) => msg.method === "Page.loadEventFired" && resolve()));
+  await sleep(500); // let tab-creation preconnects hit the closed proxy first (see egress-proxy.js)
+  proxy.open();
   await client.send("Page.navigate", { url });
   await loaded;
   await installTrustedInput(client, evidence);
   console.log(`Loaded ${url}`);
-  return { client, consoleErrors };
+  return { browser, client, consoleErrors };
 }
 
 const scriptInfo = (file) => (file ? { file: path.basename(file), sha256: sha256File(file) } : undefined);
@@ -171,7 +202,7 @@ async function sealEvidence(evidence, url, failed) {
       scripts: { test: scriptInfo(args.test), before: scriptInfo(args.before), setup: scriptInfo(args.setup) },
     });
     console.log(`EVIDENCE ${evidence.dir} manifest-sha256=${m.manifestSha256} trusted-inputs=${m.counts.trustedInputs} ` +
-      `requests=${m.counts.network} external=${m.counts.external} frames=${m.counts.frames}`);
+      `requests=${m.counts.network} external=${m.counts.external} egress=${m.counts.egress} frames=${m.counts.frames}`);
   } catch (err) {
     console.log(`ERROR couldn't write the evidence pack: ${err.message}`);
   }
@@ -234,8 +265,9 @@ async function runSteps(client, consoleErrors) {
   return failed;
 }
 
-async function shutdown(chrome, server, profile) {
+async function shutdown(chrome, server, proxy, profile) {
   server.close();
+  proxy.close();
   if (chrome) {
     if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(chrome.proc.pid), "/T", "/F"], { stdio: "ignore" });
     else chrome.proc.kill();
@@ -254,6 +286,8 @@ async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "bv-"));
   const server = await serve(path.resolve(args.dir));
   const url = `http://127.0.0.1:${server.address().port}/${args.page || "index.html"}`;
+  const egress = [];
+  const proxy = await startEgressProxy((row) => egress.push(row));
   let chrome;
   let page;
   let evidence;
@@ -261,16 +295,16 @@ async function main() {
   try {
     chrome = await launchChrome(profile, Number(args.width || 900), Number(args.height || 700));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    if (args.evidence) evidence = new Evidence(path.resolve(args.evidence), { origin, exe: chrome.exe, video: args.video === "1" });
-    page = await openPage(chrome, url, evidence);
+    if (args.evidence) evidence = new Evidence(path.resolve(args.evidence), { origin, exe: chrome.exe, video: args.video === "1", egress });
+    page = await openPage(chrome, proxy, url, evidence);
     failed = await runSteps(page.client, page.consoleErrors);
   } catch (err) {
     // A script that throws is a failed check; anything else means the run itself broke.
     console.log(`${/^(before|test|setup) threw/.test(err.message) ? "FAIL" : "ERROR"} ${err.message}`);
   } finally {
     if (evidence && page) await sealEvidence(evidence, url, failed);
-    if (page) page.client.close();
-    await shutdown(chrome, server, profile);
+    if (page) { page.client.close(); page.browser.close(); }
+    await shutdown(chrome, server, proxy, profile);
   }
   console.log(failed ? "RESULT: FAIL" : "RESULT: PASS");
   process.exit(failed ? 1 : 0);

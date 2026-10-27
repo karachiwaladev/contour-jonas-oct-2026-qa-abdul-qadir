@@ -196,18 +196,25 @@ It reads `<project>/tests/acceptance/ticket-<T>.json`, which you write from the 
   `await trusted.type(el, text)`. Chrome dispatches these as real mouse and keyboard input
   (`isTrusted`), which page code can't fake, and `trusted.click` refuses to click an element
   that's still moving or covered. Set values directly only for native date and select widgets.
-- **Evidence comes from Chrome, not from the checks.** Every audit run records an evidence pack
-  through the DevTools Protocol:
-  - console messages attributed to their source (app, test script or browser);
-  - every network request;
+  `trusted` is handed to the test script once, and app code can't reach it. A run with no
+  trusted input at all is NOT VERIFIED.
+- **Evidence comes from Chrome and the harness, not from the checks.** Every audit run records
+  an evidence pack:
+  - console messages labelled by the script Chrome actually ran: `app:` only for script files
+    Chrome loaded from the app, while eval'd, injected or self-named code is labelled as such;
+  - every request the page made, plus every connection that left the machine. The app runs in
+    its own browser context whose only way out is the harness's egress proxy, so workers,
+    service workers, WebSockets and WebRTC are logged too;
   - each trusted input;
   - IndexedDB read directly by Chrome;
   - a screencast (`base/video.html`);
   - the Chrome version and binary SHA-256;
-  - a SHA-256 manifest of all of the above.
+  - a SHA-256 manifest of all of the above. The audit rejects a pack whose files don't match it,
+    or whose manifest isn't the one the run printed.
 
-  `"network": "local-only"` on a criterion checks Chrome's network log, which is stronger
-  than `absent`. Add `--evidence <dir>` to keep the packs.
+  `"network": "local-only"` on a criterion checks both network logs, which is stronger than
+  `absent`. Add `--evidence <dir>` to keep the packs. Locally, anyone could still rerun and
+  re-seal a pack. The packs that settle disputes are the ones GitHub records and stores.
 
 It fails (exit 1, NOT VERIFIED) on:
 - an invented ask (a quote that isn't in the ticket);
@@ -341,10 +348,12 @@ The PR is *approved* if at least one reviewer's latest state is `APPROVED` and n
        the user which asks aren't verified, and handle it like changes requested.
      - Exit 2: don't merge. Say what stopped the audit.
 
-     The **Verification gate** GitHub Action runs the same audit on every ticket PR, with main's
-     code, and stores the report and Chrome's evidence packs as a build artifact. Its result is
-     the verdict of record, because it comes from GitHub rather than from this session. Don't
-     merge while that check is red or still running.
+     The **Verification gate** GitHub Action runs the same audit on every PR, with main's code,
+     and stores the report and Chrome's evidence packs as a build artifact. A ticket PR must be on
+     a `ticket-<T>-<slug>` branch. Any other PR that touches a project re-proves all of that
+     project's tickets (`--mode regression`), and it may not close issues or change acceptance
+     files. The gate's result is the verdict of record, because it comes from GitHub rather than
+     from this session. Don't merge while that check is red or still running.
 
      Only an explicit chat instruction such as "merge PR #N without verification" overrides
      this, and the issue comment then says it was merged unverified. Factory PRs, which aren't

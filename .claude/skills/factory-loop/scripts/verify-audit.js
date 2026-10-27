@@ -3,9 +3,13 @@
 //
 //   node verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md]
 //                        [--evidence <dir>] [--acceptance <file>] [--ticket-file ticket.json]
+//                        [--mode ticket|regression]
 //
 // --evidence    keep the evidence packs recorded from Chrome (base run with video, one per mutation)
 //               in this folder; CI uploads it as an artifact. Without it they go to a temp folder.
+// --mode regression  with --pr, for a PR that isn't this ticket's own (a factory change or another
+//               ticket touching the project): re-proves the ticket on the PR head, without the rules
+//               about that PR's body, screenshots and factory files.
 // --acceptance  criteria file from the current checkout instead of the audited tree (for old PRs)
 // --ticket-file {title, body} JSON instead of fetching the issue with gh (offline runs)
 //
@@ -32,8 +36,10 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) args[argv[i].replace(/^--/, "")] = argv[i + 1];
   if (!args.issue || !args.project) {
-    throw new io.AuditError("usage: verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md] [--evidence dir] [--acceptance f] [--ticket-file f]");
+    throw new io.AuditError("usage: verify-audit.js --issue <N> --project <dir> [--pr <PR>] [--out report.md] [--evidence dir] [--acceptance f] [--ticket-file f] [--mode ticket|regression]");
   }
+  args.mode = args.mode || "ticket";
+  if (!["ticket", "regression"].includes(args.mode)) throw new io.AuditError(`--mode must be ticket or regression, not "${args.mode}"`);
   args.project = args.project.replace(/\\/g, "/").replace(/\/+$/, "");
   return args;
 }
@@ -54,7 +60,9 @@ function checkRun(f, projectDir, acc) {
   if (!fs.existsSync(checksFile)) return f.blockers.push(`no browser checks at ${f.project}/tests/checks.js`);
   for (const why of lib.lintChecks(fs.readFileSync(checksFile, "utf8"))) f.blockers.push(`checks.js: ${why}`);
   f.run = io.runBrowser(projectDir, { evidenceDir: path.join(f.evidenceRoot, "base"), video: true });
-  if (!f.run.evidence.manifest.counts.trustedInputs) f.notes.push("checks.js drove the UI with no trusted (Chrome-dispatched) input");
+  // Synthetic .click() calls bypass the real event path (focus, disabled controls, overlays), so a run
+  // that never used trusted input doesn't count as having driven the UI.
+  if (!f.run.evidence.manifest.counts.trustedInputs) f.blockers.push("checks.js never used trusted.click / trusted.type: drive the UI with real input dispatched by Chrome");
   if (f.run.fail.length) f.blockers.push(`${f.run.fail.length} browser check(s) failed: ${f.run.fail.join("; ")}`);
   if (f.run.consoleErrors.length) f.blockers.push(`console errors: ${f.run.consoleErrors.join("; ")}`);
   if ((f.run.result !== "PASS" || f.run.exitCode !== 0) && !f.run.fail.length && !f.run.consoleErrors.length) {
@@ -64,7 +72,7 @@ function checkRun(f, projectDir, acc) {
   f.criteria = lib.gradeCriteria(acc, f.run, {
     fileExists: (rel) => io.fileExists(projectDir, rel),
     absentHits: (pattern) => io.absentHits(projectDir, pattern),
-    externalRequests: () => lib.externalRequests(f.run.evidence.network),
+    externalRequests: () => lib.externalRequests(f.run.evidence.network, f.run.evidence.egress),
   });
   for (const c of f.criteria.filter((x) => !x.ok)) f.blockers.push(`${c.id} not verified: ${c.problems.join("; ")}`);
 }
@@ -107,7 +115,7 @@ function checkEvidence(f, projectDir, pr, repoRoot) {
   f.shots = io.screenshots(projectDir, f.project, f.T);
   if (!f.shots.length) f.blockers.push(`no screenshots named ${f.project}/screenshots/ticket-${f.T}-*.png`);
   for (const s of f.shots) for (const p of s.problems) f.blockers.push(`screenshot ${s.file}: ${p}`);
-  if (pr) checkPr(f, pr, repoRoot);
+  if (pr && f.mode !== "regression") checkPr(f, pr, repoRoot);
 }
 
 function loadAcceptance(f, args, root, projectDir) {
@@ -134,7 +142,8 @@ function audit(args) {
   const repoRoot = io.git(["rev-parse", "--show-toplevel"]).trim();
   const pr = args.pr ? io.checkoutPr(args.pr, repoRoot, args.project) : null;
   const root = pr ? pr.dir : repoRoot;
-  const f = { T, issue: args.issue, project: args.project, ref: pr ? `PR #${pr.number} @ ${pr.headRefOid.slice(0, 7)}` : "working tree", blockers: [], notes: [] };
+  const ref = pr ? `PR #${pr.number} @ ${pr.headRefOid.slice(0, 7)}${args.mode === "regression" ? " (regression: re-proving this ticket on another PR)" : ""}` : "working tree";
+  const f = { T, issue: args.issue, project: args.project, mode: args.mode, ref, blockers: [], notes: [] };
   f.evidenceRoot = args.evidence ? path.resolve(args.evidence) : fs.mkdtempSync(path.join(require("os").tmpdir(), "ve-"));
   f.evidenceKept = !!args.evidence;
   try {

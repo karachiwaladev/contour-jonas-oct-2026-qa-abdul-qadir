@@ -1,23 +1,27 @@
-// Trusted input for page-side test scripts. checks.js calls window.trusted.click(el) / .type(el, text)
+// Trusted input for page-side test scripts. checks.js calls trusted.click(el) / .type(el, text)
 // / .snapshot(label); the request crosses a CDP binding to Node, which makes Chrome itself dispatch real
 // mouse and keyboard events (event.isTrusted === true, impossible to forge from page JavaScript) and
 // logs every action to the evidence pack.
+//
+// Page code can't reach the channel: the binding has a random name and is removed from window as soon
+// as the helpers capture it, replies come back through a function handle that is never on window,
+// and the API itself is handed to the test script once (window[TAKE_TRUSTED]() deletes itself).
 
-const BINDING = "__cdpInput";
+const crypto = require("crypto");
 
-// Installed in the page before the test runs.
-const PAGE_HELPERS = `(() => {
+const TAKE_TRUSTED = "__takeTrustedInput";
+
+// Installed in the page after load, before the test runs. Evaluates to the reply function.
+const pageHelpers = (binding) => `(() => {
+  const send = window.${binding};
+  delete window.${binding};
+  if (window.${binding}) throw new Error("couldn't hide the trusted-input binding");
   const pending = new Map();
   let seq = 0;
-  window.__cdpInputDone = (id, result) => {
-    const done = pending.get(id);
-    pending.delete(id);
-    if (done) done(result);
-  };
   const call = (msg) => new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, (r) => (r && r.error ? reject(new Error("trusted input: " + r.error)) : resolve(r)));
-    window.${BINDING}(JSON.stringify({ id, ...msg }));
+    send(JSON.stringify({ id, ...msg }));
   });
   const target = (el) => {
     if (!(el instanceof Element)) throw new Error("trusted input: element not found");
@@ -25,10 +29,16 @@ const PAGE_HELPERS = `(() => {
     el.setAttribute("data-trusted-target", key);
     return '[data-trusted-target="' + key + '"]';
   };
-  window.trusted = {
+  const api = Object.freeze({
     click: (el) => call({ action: "click", selector: target(el) }),
     type: (el, text) => call({ action: "type", selector: target(el), text: String(text) }),
     snapshot: (label) => call({ action: "snapshot", label: String(label) }),
+  });
+  Object.defineProperty(window, "${TAKE_TRUSTED}", { configurable: true, value: () => { delete window.${TAKE_TRUSTED}; return api; } });
+  return (id, result) => {
+    const done = pending.get(id);
+    pending.delete(id);
+    if (done) done(result);
   };
 })()`;
 
@@ -103,9 +113,12 @@ async function perform(client, req, evidence) {
 
 // Wires the binding and the page helpers. Call after the page has loaded, before the test runs.
 async function installTrustedInput(client, evidence) {
-  await send(client, "Runtime.addBinding", { name: BINDING });
+  const binding = `__cdpInput_${crypto.randomBytes(8).toString("hex")}`;
+  await send(client, "Runtime.addBinding", { name: binding });
+  const { result: reply, exceptionDetails } = await send(client, "Runtime.evaluate", { expression: pageHelpers(binding) });
+  if (exceptionDetails) throw new Error(`couldn't install trusted input: ${exceptionDetails.exception?.description || exceptionDetails.text}`);
   client.on(async (msg) => {
-    if (msg.method !== "Runtime.bindingCalled" || msg.params.name !== BINDING) return;
+    if (msg.method !== "Runtime.bindingCalled" || msg.params.name !== binding) return;
     let req = {};
     let result;
     try {
@@ -114,9 +127,9 @@ async function installTrustedInput(client, evidence) {
     } catch (err) {
       result = { error: err.message };
     }
-    await send(client, "Runtime.evaluate", { expression: `window.__cdpInputDone(${Number(req.id)}, ${JSON.stringify(result)})` }).catch(() => {});
+    await send(client, "Runtime.callFunctionOn", { objectId: reply.objectId, functionDeclaration: "function (id, r) { this(id, r); }",
+      arguments: [{ value: Number(req.id) }, { value: result }] }).catch(() => {});
   });
-  await send(client, "Runtime.evaluate", { expression: PAGE_HELPERS });
 }
 
-module.exports = { installTrustedInput };
+module.exports = { installTrustedInput, TAKE_TRUSTED };

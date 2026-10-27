@@ -72,21 +72,33 @@ test("bypass: checks.js that prints passes instead of asserting", () => {
 });
 
 test("parseRun separates checks, console errors, run errors and the result", () => {
-  const run = lib.parseRun("Loaded x\nPASS a\nFAIL b\nFAIL console error: boom\nERROR no chrome\nRESULT: FAIL\n");
-  assert.deepStrictEqual(run, { pass: ["a"], fail: ["b"], consoleErrors: ["boom"], errors: ["no chrome"], result: "FAIL" });
+  const sha = "a".repeat(64);
+  const run = lib.parseRun(`Loaded x\nPASS a\nFAIL b\nFAIL console error: boom\nERROR no chrome\nEVIDENCE C:\\ev manifest-sha256=${sha} trusted-inputs=3\nRESULT: FAIL\n`);
+  assert.deepStrictEqual(run, { pass: ["a"], fail: ["b"], consoleErrors: ["boom"], errors: ["no chrome"], result: "FAIL", manifestSha256: sha });
 });
 
-test("Chrome's network log decides local-only, and console messages are attributed by source", () => {
+test("the network log and the egress proxy decide local-only, and console messages are counted by source", () => {
   const rows = [
     { method: "GET", url: "http://127.0.0.1:5000/app.js", local: true },
     { method: "POST", url: "https://api.example.com/sync", local: false },
   ];
-  assert.deepStrictEqual(lib.externalRequests(rows), ["POST https://api.example.com/sync"]);
+  const egress = [
+    { method: "CONNECT", target: "www.google.com:443", refused: true }, // Chrome's own, before the app loaded
+    { method: "GET", target: "http://worker.example/x" }, // e.g. from a Web Worker, invisible to the page log
+  ];
+  assert.deepStrictEqual(lib.externalRequests(rows, egress), ["POST https://api.example.com/sync", "GET http://worker.example/x (egress proxy)"]);
   const [c] = lib.gradeCriteria(acc([crit("N", "q", { checks: ["ok"], network: "local-only" })]), { pass: ["ok"], fail: [] },
-    { fileExists: () => true, absentHits: () => [], externalRequests: () => lib.externalRequests(rows) });
-  assert.deepStrictEqual(c.problems, ["Chrome saw an external request: POST https://api.example.com/sync"]);
+    { fileExists: () => true, absentHits: () => [], externalRequests: () => lib.externalRequests([], egress) });
+  assert.deepStrictEqual(c.problems, ["external request during the run: GET http://worker.example/x (egress proxy)"]);
   assert.deepStrictEqual(lib.validateAcceptance(acc([crit("N", "q", { network: "anywhere" })])), ['N: "network" can only be "local-only"']);
-  assert.deepStrictEqual(lib.consoleBySource([{ source: "app:app.js" }, { source: "test-script" }, { source: "app:app.js" }]), { "app:app.js": 2, "test-script": 1 });
+  assert.deepStrictEqual(lib.consoleBySource([{ source: "app:app.js" }, { source: "self-named:x" }, { source: "app:app.js" }]), { "app:app.js": 2, "self-named:x": 1 });
+});
+
+test("an evidence pack edited after the run no longer matches its manifest", () => {
+  const manifest = { files: [{ path: "network.jsonl", sha256: "n1" }, { path: "console.jsonl", sha256: "c1" }] };
+  assert.deepStrictEqual(lib.manifestProblems(manifest, { "network.jsonl": "n1", "console.jsonl": "c1" }), []);
+  assert.deepStrictEqual(lib.manifestProblems(manifest, { "network.jsonl": "n2", "extra.json": "x" }),
+    ["network.jsonl changed after the run", "console.jsonl is missing", "extra.json isn't in the manifest"]);
 });
 
 test("grading and mutation kills", () => {

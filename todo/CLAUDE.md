@@ -58,7 +58,8 @@ It maps each ticket's words to checks through `tests/acceptance/ticket-<T>.json`
 checks fresh, and checks the screenshots. Add `--pr <PR>` to audit a pull request's head commit,
 and `--evidence <dir>` to keep the evidence packs Chrome records. Each pack holds the console
 attributed to its source, the network log, an IndexedDB dump, a video (`base/video.html`), the
-Chrome binary hash and a manifest. On GitHub, the same audit runs on every PR and its evidence
+Chrome binary hash and a manifest; the egress log (`egress.jsonl`) lists every connection that
+left the machine, from pages, workers or WebSockets. On GitHub, the same audit runs on every PR and its evidence
 is attached to the run.
 
 The checks drive the UI with `trusted.click` and `trusted.type`, which is real input dispatched

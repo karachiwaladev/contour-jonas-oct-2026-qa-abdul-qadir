@@ -1,8 +1,14 @@
-# Verification gate for ticket PRs. It runs on pull_request_target, so the workflow and the audit code
-# come from main: a ticket PR can't weaken the audit that judges it (the audit also refuses ticket PRs
-# that change .claude/ or .github/). The PR's files are only exported as data with `git archive`, and
-# its checks.js runs inside headless Chrome; no PR code runs in Node, and the token is read-only.
+# Verification gate for every PR. It runs on pull_request_target, so the workflow and the audit code
+# come from main: a PR can't weaken the audit that judges it (the audit also refuses ticket PRs that
+# change .claude/ or .github/). The PR's files are only exported as data with `git archive`, and its
+# checks.js runs inside headless Chrome; no PR code runs in Node, and the token is read-only.
 # The verdict, the report and the evidence packs recorded by Chrome are produced and stored by GitHub.
+#
+#   ticket-<T>-* branch  → audit ticket T on the PR head (its issue must be closed by the PR).
+#   any other branch     → fails if it closes an issue or adds/removes acceptance files (that's ticket
+#                          work under another name); otherwise every ticket of every project it touches
+#                          is re-proved on the PR head (--mode regression), with issue numbers from main.
+#                          A PR that touches no project (pure factory change) is left to Factory CI.
 name: Verification gate
 
 on:
@@ -26,7 +32,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number || inputs.pr }}
@@ -41,49 +47,75 @@ jobs:
         with:
           node-version: 20
 
-      - name: Find the ticket
-        id: ticket
+      - name: Decide what to audit
+        id: plan
         run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number"; exit 1; }
           branch=$(gh pr view "$PR" --json headRefName --jq .headRefName)
-          if [[ ! "$branch" =~ ^ticket-([0-9]+)- ]]; then
-            echo "kind=factory" >> "$GITHUB_OUTPUT"
-            echo "Not a ticket branch ($branch); Factory CI covers it."
-            exit 0
-          fi
-          T="${BASH_REMATCH[1]}"
           issue=$(gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences[0].number // empty')
           git fetch --quiet origin "pull/$PR/head"
-          project=$(git ls-tree -r --name-only FETCH_HEAD | grep -E "^[A-Za-z0-9._-]+/tests/acceptance/ticket-$T\.json$" | head -1 | cut -d/ -f1)
-          {
-            echo "kind=ticket"
-            echo "issue=$issue"
-            echo "project=$project"
-          } >> "$GITHUB_OUTPUT"
-          if [[ -z "$issue" || -z "$project" ]]; then
-            echo "::error::PR #$PR must close its issue and add <project>/tests/acceptance/ticket-$T.json"
-            exit 1
+          base=$(git merge-base HEAD FETCH_HEAD)
+          : > audits.tsv
+          if [[ "$branch" =~ ^ticket-([0-9]+)- ]]; then
+            T="${BASH_REMATCH[1]}"
+            project=$(git ls-tree -r --name-only FETCH_HEAD | grep -E "^[A-Za-z0-9._-]+/tests/acceptance/ticket-$T\.json$" | head -1 | cut -d/ -f1 || true)
+            if [[ -z "$issue" || -z "$project" ]]; then
+              echo "::error::PR #$PR must close its issue and add <project>/tests/acceptance/ticket-$T.json"
+              exit 1
+            fi
+            [[ "$issue" =~ ^[0-9]+$ ]] || { echo "::error::bad issue number"; exit 1; }
+            printf 'ticket\t%s\t%s\t%s\n' "$project" "$issue" "$T" >> audits.tsv
+          else
+            if [[ -n "$issue" ]]; then
+              echo "::error::PR #$PR closes issue #$issue but isn't on a ticket-<T>-<slug> branch, so it would skip the ticket audit"
+              exit 1
+            fi
+            git diff --name-only --no-renames "$base" FETCH_HEAD > changed.txt
+            if grep -E '^[^/]+/tests/acceptance/' changed.txt; then
+              echo "::error::Only a ticket-<T>-<slug> PR may add, change or remove acceptance files"
+              exit 1
+            fi
+            for project in $(cut -d/ -f1 -s changed.txt | sort -u); do
+              [[ "$project" =~ ^[A-Za-z0-9._-]+$ && "$project" != .* ]] || continue
+              for acc in "$project"/tests/acceptance/ticket-*.json; do
+                [ -e "$acc" ] || continue
+                T="$(basename "$acc" .json)"; T="${T#ticket-}"
+                acc_issue="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, "")).issue)' "$acc")"
+                [[ "$acc_issue" =~ ^[0-9]+$ && "$T" =~ ^[0-9]+$ ]] || { echo "::error::bad issue in $acc"; exit 1; }
+                printf 'regression\t%s\t%s\t%s\n' "$project" "$acc_issue" "$T" >> audits.tsv
+              done
+            done
           fi
+          echo "count=$(wc -l < audits.tsv)" >> "$GITHUB_OUTPUT"
+          echo "Audits planned:"; cat audits.tsv
 
       - name: Verification audit (fresh Chrome run, mutations, evidence)
-        if: steps.ticket.outputs.kind == 'ticket'
-        env:
-          ISSUE: ${{ steps.ticket.outputs.issue }}
-          PROJECT: ${{ steps.ticket.outputs.project }}
+        if: steps.plan.outputs.count != '0'
         run: |
-          node .claude/skills/factory-loop/scripts/verify-audit.js --issue "$ISSUE" --project "$PROJECT" \
-            --pr "$PR" --evidence evidence --out audit-report.md
+          status=0
+          while IFS=$'\t' read -r mode project issue T; do
+            echo "::group::$mode audit of ticket #$T (issue #$issue, $project/)"
+            mkdir -p "evidence/ticket-$T"
+            node .claude/skills/factory-loop/scripts/verify-audit.js --issue "$issue" --project "$project" --pr "$PR" \
+              --mode "$mode" --evidence "evidence/ticket-$T" --out "evidence/ticket-$T/report.md" || status=1
+            echo "::endgroup::"
+          done < audits.tsv
+          exit $status
 
       - name: Report
-        if: always() && steps.ticket.outputs.kind == 'ticket'
-        run: cat audit-report.md >> "$GITHUB_STEP_SUMMARY" || echo "No report: the audit couldn't run (see the log)." >> "$GITHUB_STEP_SUMMARY"
+        if: always() && steps.plan.outputs.count != '0'
+        run: |
+          for r in evidence/ticket-*/report.md; do
+            if [ -e "$r" ]; then cat "$r" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
+          ls evidence/ticket-*/report.md > /dev/null 2>&1 || echo "No report: the audit couldn't run (see the log)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload evidence
-        if: always() && steps.ticket.outputs.kind == 'ticket'
+        if: always() && steps.plan.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: verification-evidence-pr-${{ env.PR }}
-          path: |
-            evidence/
-            audit-report.md
+          path: evidence/
           retention-days: 30
           if-no-files-found: warn

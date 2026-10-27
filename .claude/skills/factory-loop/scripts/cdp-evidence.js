@@ -1,8 +1,16 @@
 // Evidence pack for a browser-verify run, recorded from Chrome's own DevTools events rather than from
 // anything page code reports about itself:
-//   console.jsonl   every console message and exception, with the source that produced it
-//                   (app:<file>, test-script for code injected by the harness, browser:<area> for Chrome)
-//   network.jsonl   every request the page made, flagged local or external
+//   console.jsonl   every console message and exception, with the source that produced it, taken from
+//                   Chrome's own record of the script (Debugger.scriptParsed), not from its claimed URL:
+//                     app:<file>          a script file Chrome fetched from the app's server
+//                     app-inline:<file>   code inline in, or injected into, an app page
+//                     page-eval           eval / new Function / injected code with no URL
+//                     self-named:<url>    code that named itself with a //# sourceURL comment
+//                     harness:<step>      the harness's test, before and setup scripts
+//                     browser:<area>      Chrome itself
+//   network.jsonl   every request the page made, flagged local or external (page-level CDP view)
+//   egress.jsonl    every connection Chrome made to anything but loopback, logged by egress-proxy.js;
+//                   this one also covers workers, service workers, WebSockets and WebRTC
 //   input.jsonl     every trusted click/typing the harness dispatched (see cdp-input.js)
 //   indexeddb-*.json  database contents read by Chrome through the IndexedDB domain
 //   frames/ + video.html  screencast of the rendered page (when video is on)
@@ -23,9 +31,13 @@ function chromeBinaries(exe) {
   return [...new Set([real, fs.existsSync(bin) ? bin : real])].map((file) => ({ file, sha256: sha256File(file) }));
 }
 
+// browser-verify.js names the scripts it evaluates with this sourceURL prefix.
+const HARNESS_PREFIX = "browser-verify-harness/";
+
 class Evidence {
-  constructor(dir, { origin, exe, video }) {
-    Object.assign(this, { dir, origin, exe, video, frames: [], log: { console: [], network: [], input: [] } });
+  constructor(dir, { origin, exe, video, egress }) {
+    Object.assign(this, { dir, origin, exe, video, frames: [], scripts: new Map(), fetchedScripts: new Set(),
+      log: { console: [], network: [], input: [], egress: egress || [] } });
     fs.mkdirSync(path.join(dir, video ? "frames" : ""), { recursive: true });
   }
 
@@ -35,27 +47,45 @@ class Evidence {
     client.on((msg) => this.onEvent(msg));
     await client.send("Network.enable");
     await client.send("Log.enable");
+    // The Debugger domain reports every script Chrome compiles, which is what source() trusts. It never
+    // pauses: `debugger;` statements in the app are ignored.
+    await client.send("Debugger.enable");
+    await client.send("Debugger.setSkipAllPauses", { skip: true });
     if (this.video) await client.send("Page.startScreencast", { format: "jpeg", quality: 50, maxWidth: 800, maxHeight: 1000 });
   }
 
-  source(url) {
-    if (!url) return "test-script";
-    return url.startsWith(this.origin) ? `app:${url.slice(this.origin.length + 1)}` : `other:${url}`;
+  isLocal(url) {
+    return url === this.origin || url.startsWith(`${this.origin}/`) || /^(data|blob|about):/.test(url);
+  }
+
+  // Who produced a console message, from Chrome's record of the script that ran (see the header).
+  source(scriptId, fallbackUrl) {
+    const s = this.scripts.get(scriptId);
+    const url = s ? s.url : fallbackUrl || "";
+    if (s?.hasSourceURL) return url.startsWith(HARNESS_PREFIX) ? `harness:${url.slice(HARNESS_PREFIX.length)}` : `self-named:${url}`;
+    if (!url) return "page-eval";
+    if (!url.startsWith(`${this.origin}/`)) return `other:${url}`;
+    const file = url.slice(this.origin.length + 1);
+    return this.fetchedScripts.has(url) && s && !s.startLine && !s.startColumn ? `app:${file}` : `app-inline:${file}`;
   }
 
   onEvent({ method, params: p }) {
     const t = Date.now();
-    if (method === "Runtime.consoleAPICalled") {
+    if (method === "Debugger.scriptParsed") {
+      this.scripts.set(p.scriptId, { url: p.url, hasSourceURL: !!p.hasSourceURL, startLine: p.startLine, startColumn: p.startColumn });
+    } else if (method === "Runtime.consoleAPICalled") {
       const frame = p.stackTrace?.callFrames?.[0];
-      this.log.console.push({ t, type: p.type, source: this.source(frame?.url), line: frame?.lineNumber, text: p.args.map((a) => a.value ?? a.description).join(" ") });
+      this.log.console.push({ t, type: p.type, source: this.source(frame?.scriptId, frame?.url), line: frame?.lineNumber, text: p.args.map((a) => a.value ?? a.description).join(" ") });
     } else if (method === "Runtime.exceptionThrown") {
       const d = p.exceptionDetails;
-      this.log.console.push({ t, type: "exception", source: this.source(d.url || d.stackTrace?.callFrames?.[0]?.url), text: d.exception?.description || d.text });
+      const frame = d.stackTrace?.callFrames?.[0];
+      this.log.console.push({ t, type: "exception", source: this.source(d.scriptId || frame?.scriptId, d.url || frame?.url), text: d.exception?.description || d.text });
     } else if (method === "Log.entryAdded") {
       this.log.console.push({ t, type: p.entry.level, source: `browser:${p.entry.source}`, text: p.entry.text, url: p.entry.url });
     } else if (method === "Network.requestWillBeSent") {
       const url = p.request.url;
-      this.log.network.push({ t, method: p.request.method, type: p.type, url, local: url.startsWith(this.origin) || /^(data|blob|about):/.test(url) });
+      if (p.type === "Script") this.fetchedScripts.add(url);
+      this.log.network.push({ t, method: p.request.method, type: p.type, url, local: this.isLocal(url) });
     } else if (method === "Page.screencastFrame") {
       this.client.send("Page.screencastFrameAck", { sessionId: p.sessionId }).catch(() => {});
       const name = `frames/${String(this.frames.length).padStart(5, "0")}.jpg`;
@@ -120,7 +150,7 @@ function tick(){if(!on||!F.length)return;show();const cur=F[i],next=F[i+1];i=nex
     const manifest = {
       ...meta, chrome: { product, revision, userAgent, binaries: chromeBinaries(this.exe) }, node: process.version,
       counts: { console: this.log.console.length, network: this.log.network.length, external: this.log.network.filter((r) => !r.local).length,
-        trustedInputs: this.log.input.length, frames: this.frames.length },
+        egress: this.log.egress.filter((r) => !r.refused).length, trustedInputs: this.log.input.length, frames: this.frames.length },
       files,
     };
     const text = JSON.stringify(manifest, null, 2);
@@ -136,4 +166,4 @@ function listFiles(dir, base = dir) {
   }).filter((rel) => rel !== "manifest.json");
 }
 
-module.exports = { Evidence, sha256File };
+module.exports = { Evidence, sha256, sha256File, listFiles, HARNESS_PREFIX };

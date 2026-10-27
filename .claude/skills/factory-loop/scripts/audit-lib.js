@@ -99,27 +99,46 @@ function lintChecks(source) {
   return rules.filter(([re]) => re.test(code)).map(([, why]) => why);
 }
 
-// Reads browser-verify.js output: PASS/FAIL check lines, ERROR (run couldn't happen) and RESULT.
+// Reads browser-verify.js output: PASS/FAIL check lines, ERROR (run couldn't happen), RESULT, and the
+// manifest hash on the EVIDENCE line.
 function parseRun(stdout) {
-  const run = { pass: [], fail: [], consoleErrors: [], errors: [], result: null };
+  const run = { pass: [], fail: [], consoleErrors: [], errors: [], result: null, manifestSha256: null };
   for (const line of String(stdout).split(/\r?\n/)) {
     if (line.startsWith("FAIL console error: ")) run.consoleErrors.push(line.slice(20));
     else if (line.startsWith("PASS ")) run.pass.push(line.slice(5));
     else if (line.startsWith("FAIL ")) run.fail.push(line.slice(5));
     else if (line.startsWith("ERROR ")) run.errors.push(line.slice(6));
     else if (line.startsWith("RESULT: ")) run.result = line.slice(8).trim();
+    else if (line.startsWith("EVIDENCE ")) run.manifestSha256 = (line.match(/ manifest-sha256=([0-9a-f]{64})\b/) || [])[1] || null;
   }
   return run;
 }
 
-// Requests Chrome saw going anywhere but the local test server (from the evidence pack's network log).
-const externalRequests = (rows) => (rows || []).filter((r) => !r.local).map((r) => `${r.method} ${r.url}`);
+// Everything that left the machine: page requests to non-local URLs (CDP network log) plus every
+// connection the egress proxy forwarded (workers, service workers, WebSockets... included).
+const externalRequests = (network, egress) => [
+  ...(network || []).filter((r) => !r.local).map((r) => `${r.method} ${r.url}`),
+  ...(egress || []).filter((r) => !r.refused).map((r) => `${r.method} ${r.target} (egress proxy)`),
+];
 
-// How many console messages each source produced: app:<file>, test-script, browser:<area>.
+// Checks an evidence pack against its manifest. files = { relPath: sha256 } of what is on disk now.
+// Returns problems: a file changed, missing, or added after the manifest was written.
+function manifestProblems(manifest, files) {
+  const listed = new Map((manifest.files || []).map((f) => [f.path, f.sha256]));
+  const problems = [];
+  for (const [rel, sha] of listed) {
+    if (!(rel in files)) problems.push(`${rel} is missing`);
+    else if (files[rel] !== sha) problems.push(`${rel} changed after the run`);
+  }
+  for (const rel of Object.keys(files)) if (!listed.has(rel)) problems.push(`${rel} isn't in the manifest`);
+  return problems;
+}
+
+// How many console messages each source produced (see cdp-evidence.js for the labels).
 const consoleBySource = (rows) => (rows || []).reduce((acc, r) => ({ ...acc, [r.source]: (acc[r.source] || 0) + 1 }), {});
 
 // Grades each criterion. io = { fileExists(relPath) -> isFile, absentHits(regexSource) -> ["file:line", ...],
-// externalRequests() -> ["GET https://...", ...] from Chrome's network log }.
+// externalRequests() -> ["GET https://...", ...] from the evidence pack's network and egress logs }.
 function gradeCriteria(acc, run, io) {
   return acc.criteria.map((c) => {
     const problems = [];
@@ -129,7 +148,7 @@ function gradeCriteria(acc, run, io) {
     }
     for (const file of c.files || []) if (!io.fileExists(file)) problems.push(`file missing: ${file}`);
     if (c.absent) for (const hit of io.absentHits(c.absent)) problems.push(`forbidden pattern /${c.absent}/ at ${hit}`);
-    if (c.network === "local-only") for (const req of io.externalRequests()) problems.push(`Chrome saw an external request: ${req}`);
+    if (c.network === "local-only") for (const req of io.externalRequests()) problems.push(`external request during the run: ${req}`);
     return { ...c, problems, ok: problems.length === 0 };
   });
 }
@@ -184,6 +203,6 @@ function prEvidence(body, issue) {
 }
 
 module.exports = {
-  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy, externalRequests, consoleBySource,
+  normalize, words, validateAcceptance, ticketCoverage, lintChecks, parseRun, gradeCriteria, killedBy, externalRequests, manifestProblems, consoleBySource,
   pngInfo, screenshotProblems, prEvidence, MAX_QUOTE_WORDS, MAX_CONTEXT_WORDS,
 };

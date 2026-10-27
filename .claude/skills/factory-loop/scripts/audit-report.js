@@ -11,7 +11,7 @@ function evidenceText(c) {
   const parts = [];
   if ((c.checks || []).length) parts.push(plural(c.checks.length, "check"));
   if ((c.files || []).length) parts.push(`files: ${c.files.join(", ")}`);
-  if (c.network === "local-only") parts.push("Chrome's network log shows only local requests");
+  if (c.network === "local-only") parts.push("nothing left the machine (Chrome's network log + egress proxy)");
   if (c.absent) parts.push(`no \`/${c.absent}/\` in the source`);
   return parts.join(" + ");
 }
@@ -43,8 +43,9 @@ function browserEvidence(f) {
   return ["### Browser evidence (recorded by Chrome, not by the checks)", "",
     `- Chrome: ${m.chrome.product} (${bins})`,
     `- Real input dispatched through Chrome (\`isTrusted\` clicks and typing): ${m.counts.trustedInputs}`,
-    `- Network requests: ${m.counts.network}, of which external: ${m.counts.external}`,
-    `- Console messages by source: ${sources}`,
+    `- Network requests seen by the page: ${m.counts.network}, of which external: ${m.counts.external}`,
+    `- Connections that left the machine (egress proxy: pages, workers, WebSockets, WebRTC): ${m.counts.egress ?? "not recorded"}`,
+    `- Console messages by source (\`app:\` only for script files Chrome loaded from the app; injected or self-named code is labelled as such): ${sources}`,
     `- Screencast frames: ${m.counts.frames} (open \`base/video.html\` in the evidence pack to watch the run)`,
     `- Base-run manifest SHA-256: \`${ev.manifestSha256}\``,
     `- Evidence packs: ${f.evidenceKept ? `kept in \`${path.basename(f.evidenceRoot)}/\` (base run + one per mutation)` : "temporary; run with `--evidence <dir>` to keep them (CI uploads them as an artifact)"}`, ""];
