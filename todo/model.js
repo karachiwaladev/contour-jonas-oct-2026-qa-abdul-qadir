@@ -1,5 +1,6 @@
 // Task rules for the todo app: tags, dates, recurrence, flags and sort order. Pure functions, no DOM
-// and no storage. Classic script (not a module): its declarations are globals that app.js uses.
+// and no storage. Classic script (not a module), loaded first: its declarations are globals that
+// store.js and app.js use.
 
 // Comma-separated input → trimmed, lowercased, de-duplicated tags.
 function parseTags(text) {

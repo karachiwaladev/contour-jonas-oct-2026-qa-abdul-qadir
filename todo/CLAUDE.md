@@ -100,5 +100,5 @@ completing it, so a click on a row that hasn't re-rendered yet can't write stale
 - Render user text with `textContent`, never `innerHTML`.
 - Every change goes through `run()`. It writes to the database and then re-renders from it, so the stored data is the only source of truth.
 - View-only state (`view.status`, `view.priority`, `view.tag`, `view.editingId`) lives in memory.
-- `store.js`, `model.js` and `app.js` are classic scripts loaded in that order, so their
+- `model.js`, `store.js` and `app.js` are classic scripts loaded in that order, so their
   declarations are shared globals. The checks and the audit's mutations rely on that.

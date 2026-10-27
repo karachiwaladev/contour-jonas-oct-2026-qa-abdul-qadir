@@ -1,5 +1,6 @@
 // Storage for the todo app: tasks live client-side in IndexedDB, so they persist across reloads.
-// Classic script (not a module): its declarations are globals that model.js and app.js use.
+// Classic script (not a module), loaded after model.js (it uses DEFAULT_PRIORITY); its declarations
+// are globals that app.js uses.
 
 const DB_NAME = "todo-app";
 const DB_VERSION = 1;

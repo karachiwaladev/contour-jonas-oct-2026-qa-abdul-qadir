@@ -263,17 +263,26 @@ await addWithPriority("Someday idea", "high");
 await addWithPriority("Old bill", "low", shift(-1));
 check("due date still sorts before priority", titles().join("|") === "Old bill|Fix outage|Plan meeting|Tidy desk|Someday idea|Default task");
 
+// One done task per priority level involved, so the status half of the combination is really tested.
+await trusted.click(find("Old bill").querySelector("input[type=checkbox]"));
+await waitFor(() => find("Old bill").classList.contains("done"));
+await trusted.click(find("Someday idea").querySelector("input[type=checkbox]"));
+await waitFor(() => find("Someday idea").classList.contains("done"));
 await clickPriority("high");
 check("priority filter shows only tasks of that priority", titles().join("|") === "Fix outage|Someday idea");
-check("summary notes how many are shown when a priority filter is on", summary.textContent === "6 of 6 remaining · showing 2");
+check("summary notes how many are shown when a priority filter is on", summary.textContent === "4 of 6 remaining · showing 2");
 await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
 await tagSettled("work");
 const highAndWork = titles().join("|");
-await clickStatus("done");
-check("priority filter combines with the status and tag filters", highAndWork === "Fix outage" && items().length === 0);
-await clickStatus("all");
 await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
 await tagSettled(null);
+await clickStatus("done");
+const highAndDone = titles().join("|");
+await clickStatus("active");
+const highAndActive = titles().join("|");
+check("priority filter combines with the status and tag filters",
+  highAndWork === "Fix outage" && highAndDone === "Someday idea" && highAndActive === "Fix outage");
+await clickStatus("all");
 await clickPriority("");
 check("Any priority clears the priority filter", view.priority === null && items().length === 6);
 
