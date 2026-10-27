@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const lib = require("./audit-lib");
+const { sha256File, listFiles } = require("./cdp-evidence");
 
 class AuditError extends Error {} // the audit itself couldn't run → exit 2
 
@@ -53,26 +54,47 @@ function checkoutPr(pr, repoRoot, project) {
   }
 }
 
-// One fresh headless-Chrome run of checks.js, optionally with a mutation injected first.
-function runBrowser(projectDir, beforeFile) {
-  const args = [path.join(__dirname, "browser-verify.js"), "--dir", projectDir, "--test", path.join(projectDir, "tests", "checks.js")];
-  if (beforeFile) args.push("--before", beforeFile);
+const readJsonl = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)) : []);
+
+// Reads an evidence pack back, after checking it is the one the run sealed: the manifest's hash must
+// match the one browser-verify printed, and every file must match its hash in the manifest.
+function readEvidence(dir, printedSha256) {
+  const manifestFile = path.join(dir, "manifest.json");
+  if (!fs.existsSync(manifestFile)) throw new AuditError(`browser run left no evidence pack in ${dir}`);
+  const manifestSha256 = sha256File(manifestFile);
+  if (manifestSha256 !== printedSha256) throw new AuditError(`evidence pack ${dir}: manifest isn't the one the run printed (${printedSha256 || "none printed"})`);
+  const manifest = readJson(manifestFile);
+  const onDisk = Object.fromEntries(listFiles(dir).map((rel) => [rel, sha256File(path.join(dir, rel))]));
+  const problems = lib.manifestProblems(manifest, onDisk);
+  if (problems.length) throw new AuditError(`evidence pack ${dir} doesn't match its manifest: ${problems.join("; ")}`);
+  const read = (name) => readJsonl(path.join(dir, name));
+  return { dir, manifestSha256, manifest, network: read("network.jsonl"), egress: read("egress.jsonl"), console: read("console.jsonl") };
+}
+
+// One fresh headless-Chrome run of checks.js that records an evidence pack in evidenceDir,
+// optionally with a mutation injected first and a screencast.
+function runBrowser(projectDir, { before, evidenceDir, video } = {}) {
+  const args = [path.join(__dirname, "browser-verify.js"), "--dir", projectDir, "--test", path.join(projectDir, "tests", "checks.js"), "--evidence", evidenceDir];
+  if (before) args.push("--before", before);
+  if (video) args.push("--video", "1");
   const r = exec(process.execPath, args, { timeout: BROWSER_TIMEOUT_MS });
   if (r.error?.code === "ETIMEDOUT") throw new AuditError(`browser run timed out after ${BROWSER_TIMEOUT_MS / 60000} minutes`);
   const run = lib.parseRun(r.stdout);
   if (run.errors.length) throw new AuditError(`browser run couldn't happen: ${run.errors.join("; ")}`);
   if (![0, 1].includes(r.status) || !run.result) throw new AuditError(`browser-verify crashed: ${(r.stderr || r.stdout || "").trim().slice(-400)}`);
-  return { ...run, exitCode: r.status };
+  return { ...run, exitCode: r.status, evidence: readEvidence(evidenceDir, run.manifestSha256) };
 }
 
-// Runs checks.js once per mutation (code in a temp file); returns the parsed runs keyed by criterion id.
-function runMutations(projectDir, criteria) {
+// Runs checks.js once per mutation (code in a temp file), each with its own evidence pack under
+// evidenceRoot/mutation-<id>; returns the parsed runs keyed by criterion id.
+function runMutations(projectDir, criteria, evidenceRoot) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vm-"));
   try {
     return Object.fromEntries(criteria.map((c) => {
-      const file = path.join(dir, `${c.id.replace(/[^\w-]/g, "_")}.js`);
+      const safe = c.id.replace(/[^\w-]/g, "_");
+      const file = path.join(dir, `${safe}.js`);
       fs.writeFileSync(file, c.mutation);
-      return [c.id, runBrowser(projectDir, file)];
+      return [c.id, runBrowser(projectDir, { before: file, evidenceDir: path.join(evidenceRoot, `mutation-${safe}`) })];
     }));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -113,5 +135,5 @@ function screenshots(projectDir, project, T) {
 const inCommit = (repoRoot, sha, file) => exec("git", ["cat-file", "-e", `${sha}:${file}`], { cwd: repoRoot }).status === 0;
 
 module.exports = {
-  AuditError, git, readJson, loadTicket, checkoutPr, runBrowser, runMutations, absentHits, fileExists, screenshots, inCommit,
+  AuditError, git, readJson, loadTicket, checkoutPr, readEvidence, runBrowser, runMutations, absentHits, fileExists, screenshots, inCommit,
 };

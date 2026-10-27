@@ -1,5 +1,8 @@
 // Renders verify-audit.js findings as the markdown report posted on the PR.
 
+const path = require("path");
+const { consoleBySource } = require("./audit-lib");
+
 const esc = (s) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const ok = (b) => (b ? "✅" : "❌");
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -8,6 +11,7 @@ function evidenceText(c) {
   const parts = [];
   if ((c.checks || []).length) parts.push(plural(c.checks.length, "check"));
   if ((c.files || []).length) parts.push(`files: ${c.files.join(", ")}`);
+  if (c.network === "local-only") parts.push("nothing left the machine (Chrome's network log + egress proxy)");
   if (c.absent) parts.push(`no \`/${c.absent}/\` in the source`);
   return parts.join(" + ");
 }
@@ -27,6 +31,24 @@ function criteriaTable(criteria) {
   lines.push("", "*Feature broken on purpose:* the audit reruns the checks with that feature disabled (`mutation`); " +
     "at least one of its checks must fail, which proves the checks really test it.", "");
   return lines;
+}
+
+// What Chrome itself recorded during the base run (cdp-evidence.js), as opposed to what the checks report.
+function browserEvidence(f) {
+  const ev = f.run && f.run.evidence;
+  if (!ev) return [];
+  const m = ev.manifest;
+  const bins = m.chrome.binaries.map((b) => `${path.basename(b.file)} sha256 \`${b.sha256.slice(0, 16)}…\``).join(", ");
+  const sources = Object.entries(consoleBySource(ev.console)).map(([s, n]) => `${s} ${n}`).join(", ") || "none";
+  return ["### Browser evidence (recorded by Chrome, not by the checks)", "",
+    `- Chrome: ${m.chrome.product} (${bins})`,
+    `- Real input dispatched through Chrome (\`isTrusted\` clicks and typing): ${m.counts.trustedInputs}`,
+    `- Network requests seen by the page: ${m.counts.network}, of which external: ${m.counts.external}`,
+    `- Connections that left the machine (egress proxy: pages, workers, WebSockets, WebRTC): ${m.counts.egress ?? "not recorded"}`,
+    `- Console messages by source (\`app:\` only for script files Chrome loaded from the app; injected or self-named code is labelled as such): ${sources}`,
+    `- Screencast frames: ${m.counts.frames} (open \`base/video.html\` in the evidence pack to watch the run)`,
+    `- Base-run manifest SHA-256: \`${ev.manifestSha256}\``,
+    `- Evidence packs: ${f.evidenceKept ? `kept in \`${path.basename(f.evidenceRoot)}/\` (base run + one per mutation)` : "temporary; run with `--evidence <dir>` to keep them (CI uploads them as an artifact)"}`, ""];
 }
 
 function evidenceSection(f) {
@@ -55,7 +77,7 @@ function report(f) {
     lines.push("**Treated as context, not tested. The reviewer must confirm none of these is an ask:**",
       ...f.context.map((c) => `- ⚠ "${c.quote}" (${c.reason})`), "");
   }
-  lines.push(...evidenceSection(f));
+  lines.push(...browserEvidence(f), ...evidenceSection(f));
   if (!verified) lines.push("### Problems", "", ...f.blockers.map((b) => `- ${b}`), "");
   if (f.notes.length) lines.push("### Notes", "", ...f.notes.map((n) => `- ${n}`), "");
   return lines.join("\n");

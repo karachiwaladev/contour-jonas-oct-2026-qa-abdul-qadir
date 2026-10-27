@@ -15,19 +15,26 @@ const titles = () => items().map((li) => li.querySelector(".task-title").textCon
 const find = (title) => items().find((li) => li.querySelector(".task-title").textContent === title);
 const chipTags = (li) => [...li.querySelectorAll(".task-meta .tag")].map((c) => c.textContent);
 const filterTags = () => [...tagFilter.querySelectorAll("button[data-tag]")].map((b) => b.dataset.tag);
+// UI actions go through `trusted` (installed by browser-verify.js): real mouse clicks and typing that
+// Chrome dispatches over CDP (event.isTrusted === true), not synthetic .click() calls from page code.
+// Values a user would pick in a native date or select widget are still set directly.
+const addButton = form.querySelector('button[type="submit"]');
 const add = async (title, due = "", tags = "") => {
   const count = items().length;
-  input.value = title;
+  await trusted.type(input, title);
   dueInput.value = due;
-  tagsInput.value = tags;
-  form.requestSubmit();
+  await trusted.type(tagsInput, tags);
+  await trusted.click(addButton);
   await waitFor(() => items().length === count + 1);
 };
 const clickStatus = async (status) => {
-  statusFilter.querySelector(`[data-status="${status}"]`).click();
+  await trusted.click(statusFilter.querySelector(`[data-status="${status}"]`));
   await waitFor(() => statusFilter.querySelector(`[data-status="${status}"]`).getAttribute("aria-pressed") === "true");
   await sleep(50);
 };
+// The tag filter has settled once the re-render marks the chosen chip as pressed (view.tag changes
+// before the re-render, and real clicks need the chips where they'll actually be).
+const tagSettled = (tag) => waitFor(() => tagFilter.querySelector(tag ? `[data-tag="${tag}"]` : "button.all")?.getAttribute("aria-pressed") === "true");
 const shift = (days) => {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -51,18 +58,19 @@ check("create a second task", items().length === 2);
 check("empty state hidden once tasks exist", emptyState.hidden);
 const htmlTitle = find("<b>Write report</b>").querySelector(".task-title");
 check("task titles render as text, not HTML", !!htmlTitle && !htmlTitle.querySelector("b"));
-input.value = "   ";
-form.requestSubmit();
+await trusted.type(input, "   ");
+await trusted.click(addButton);
 await sleep(200);
 check("blank titles are ignored", items().length === 2);
-find("Buy milk").querySelector("input[type=checkbox]").click();
+await trusted.click(find("Buy milk").querySelector("input[type=checkbox]"));
 check("mark a task done", await waitFor(() => find("Buy milk").classList.contains("done")));
 check("summary counts remaining tasks", summary.textContent === "1 of 2 remaining");
-find("<b>Write report</b>").querySelector(".delete").click();
+await trusted.click(find("<b>Write report</b>").querySelector(".delete"));
 check("delete a task", (await waitFor(() => items().length === 1)) && titles()[0] === "Buy milk");
 let stored = await taskStore.all(await openDb());
 check("changes are persisted in IndexedDB", stored.length === 1 && stored[0].done === true);
-find("Buy milk").querySelector("input[type=checkbox]").click();
+await trusted.snapshot("after-create-done-delete"); // Chrome dumps IndexedDB into the evidence pack
+await trusted.click(find("Buy milk").querySelector("input[type=checkbox]"));
 check("mark a task not done again", await waitFor(() => !find("Buy milk").classList.contains("done")));
 await clear();
 
@@ -79,7 +87,7 @@ check("past-due incomplete task is marked Overdue", rent.classList.contains("ove
 check("task due today is marked Due today", find("Call bank").querySelector(".badge.due-today")?.textContent === "Due today");
 check("future and undated tasks have no badge", !find("Plan trip").querySelector(".badge") && !find("Read book").querySelector(".badge"));
 check("tasks sort by due date, undated last", titles().join("|") === "Pay rent|Call bank|Plan trip|Read book");
-rent.querySelector("input[type=checkbox]").click();
+await trusted.click(rent.querySelector("input[type=checkbox]"));
 check("completed tasks are never flagged overdue", await waitFor(() => find("Pay rent").classList.contains("done") && !find("Pay rent").querySelector(".badge")));
 
 // ---- Tags ----
@@ -88,7 +96,7 @@ check("tags are trimmed, lowercased and de-duplicated", chipTags(find("Fix bug")
 check("tag filter lists every tag in use, sorted", filterTags().join(",") === "finance,home,travel,urgent,work");
 const tagInTitle = await (async () => { await add("Tag test", "", "<i>x</i>"); return find("Tag test").querySelector(".tag"); })();
 check("tags render as text, not HTML", tagInTitle.textContent === "<i>x</i>" && !tagInTitle.querySelector("i"));
-find("Tag test").querySelector(".delete").click();
+await trusted.click(find("Tag test").querySelector(".delete"));
 await waitFor(() => !find("Tag test"));
 
 // ---- Status filter ----
@@ -101,47 +109,47 @@ await clickStatus("all");
 check("All filter shows every task", items().length === 5 && summary.textContent === "4 of 5 remaining");
 
 // ---- Tag filter ----
-tagFilter.querySelector('[data-tag="home"]').click();
+await trusted.click(tagFilter.querySelector('[data-tag="home"]'));
 check("clicking a tag shows only tasks with that tag", await waitFor(() => titles().join("|") === "Pay rent|Call bank"));
 check("selected tag chip is marked pressed", tagFilter.querySelector('[data-tag="home"]').getAttribute("aria-pressed") === "true");
 await clickStatus("active");
 check("tag filter combines with the status filter", titles().join("|") === "Call bank");
 await clickStatus("done");
-tagFilter.querySelector('[data-tag="home"]').click();
-await waitFor(() => view.tag === null);
-tagFilter.querySelector('[data-tag="travel"]').click();
+await trusted.click(tagFilter.querySelector('[data-tag="home"]'));
+await tagSettled(null);
+await trusted.click(tagFilter.querySelector('[data-tag="travel"]'));
 check("no-match message when filters hide everything", await waitFor(() => items().length === 0 && !emptyState.hidden && emptyState.textContent === "No tasks match these filters."));
 await clickStatus("all");
-tagFilter.querySelector('[data-tag="travel"]').click();
+await trusted.click(tagFilter.querySelector('[data-tag="travel"]'));
 check("clicking the selected tag again clears the tag filter", await waitFor(() => view.tag === null && items().length === 5));
-tagFilter.querySelector('[data-tag="work"]').click();
-await waitFor(() => view.tag === "work");
-tagFilter.querySelector("button.all").click();
+await trusted.click(tagFilter.querySelector('[data-tag="work"]'));
+await tagSettled("work");
+await trusted.click(tagFilter.querySelector("button.all"));
 check("All tags chip clears the tag filter", await waitFor(() => view.tag === null && items().length === 5));
 
 // ---- Edit ----
-find("Read book").querySelector(".edit").click();
+await trusted.click(find("Read book").querySelector(".edit"));
 await waitFor(() => !!find("Read book").querySelector(".edit-form"));
 let editForm = find("Read book").querySelector(".edit-form");
 check("Edit opens an inline form with the task's values", editForm.querySelector(".edit-due").value === "" && editForm.querySelector(".edit-tags").value === "");
 editForm.querySelector(".edit-due").value = shift(1);
-editForm.querySelector(".edit-tags").value = "Leisure, books";
-editForm.requestSubmit();
+await trusted.type(editForm.querySelector(".edit-tags"), "Leisure, books");
+await trusted.click(editForm.querySelector(".save"));
 check("Save updates the due date and tags", await waitFor(() => !find("Read book").querySelector(".edit-form") && chipTags(find("Read book")).join(",") === "leisure,books"));
 stored = (await taskStore.all(await openDb())).find((t) => t.title === "Read book");
 check("edits are persisted", stored.dueDate === shift(1) && stored.tags.join(",") === "leisure,books");
 check("edited task moves to its due-date position", titles().indexOf("Read book") === titles().indexOf("Plan trip") - 1);
-find("Read book").querySelector(".edit").click();
+await trusted.click(find("Read book").querySelector(".edit"));
 await waitFor(() => !!find("Read book").querySelector(".edit-form"));
 editForm = find("Read book").querySelector(".edit-form");
-editForm.querySelector(".edit-tags").value = "changed";
-editForm.querySelector(".cancel").click();
+await trusted.type(editForm.querySelector(".edit-tags"), "changed");
+await trusted.click(editForm.querySelector(".cancel"));
 check("Cancel discards edits", await waitFor(() => !find("Read book").querySelector(".edit-form") && chipTags(find("Read book")).join(",") === "leisure,books"));
 
 // ---- Tag filter resets when its last task is deleted ----
-tagFilter.querySelector('[data-tag="travel"]').click();
-await waitFor(() => view.tag === "travel");
-find("Plan trip").querySelector(".delete").click();
+await trusted.click(tagFilter.querySelector('[data-tag="travel"]'));
+await tagSettled("travel");
+await trusted.click(find("Plan trip").querySelector(".delete"));
 check("deleting a tag's last task clears that tag filter", await waitFor(() => view.tag === null && !filterTags().includes("travel") && items().length === 4));
 
 // ---- Tasks saved before due dates and tags existed ----
@@ -185,7 +193,7 @@ check("form resets to 'Does not repeat' after adding", repeatUnitInput.value ===
 await addRepeating("Stand-up notes", "", "day", 1);
 check("repeating task without a date defaults to due today", (await taskStore.all(db)).find((t) => t.title === "Stand-up notes").dueDate === today);
 check("singular label for an interval of 1", find("Stand-up notes").querySelector(".chip.repeat").textContent === "↻ Every day");
-find("Water plants").querySelector("input[type=checkbox]").click();
+await trusted.click(find("Water plants").querySelector("input[type=checkbox]"));
 check("completing a repeating task creates the next occurrence",
   await waitFor(() => items().filter((li) => li.querySelector(".task-title").textContent === "Water plants").length === 2));
 let waterings = (await taskStore.all(db)).filter((t) => t.title === "Water plants").sort((a, b) => a.createdAt - b.createdAt);
@@ -193,32 +201,32 @@ check("completed occurrence stays as done history", waterings[0].done === true &
 check("next occurrence is open, on schedule, with the same tags and repeat",
   waterings[1].done === false && waterings[1].dueDate === shift(11) && waterings[1].tags.join() === "home" && waterings[1].repeat.every === 2 && waterings[1].repeat.unit === "week");
 const doneItem = () => items().find((li) => li.querySelector(".task-title").textContent === "Water plants" && li.classList.contains("done"));
-doneItem().querySelector("input[type=checkbox]").click();
+await trusted.click(doneItem().querySelector("input[type=checkbox]"));
 await waitFor(() => !doneItem());
-items().filter((li) => li.querySelector(".task-title").textContent === "Water plants")
-  .find((li) => li.dataset.id === String(waterings[0].id)).querySelector("input[type=checkbox]").click();
+await trusted.click(items().filter((li) => li.querySelector(".task-title").textContent === "Water plants")
+  .find((li) => li.dataset.id === String(waterings[0].id)).querySelector("input[type=checkbox]"));
 await waitFor(() => !!doneItem());
 await sleep(150);
 check("un-ticking and re-ticking does not create a duplicate", (await taskStore.all(db)).filter((t) => t.title === "Water plants").length === 2);
 
-find("Stand-up notes").querySelector(".edit").click();
+await trusted.click(find("Stand-up notes").querySelector(".edit"));
 await waitFor(() => !!find("Stand-up notes").querySelector(".edit-form"));
 editForm = find("Stand-up notes").querySelector(".edit-form");
 check("edit form shows the current repeat", editForm.querySelector(".edit-repeat").value === "day" && editForm.querySelector(".edit-every").value === "1");
 editForm.querySelector(".edit-repeat").value = "month";
 editForm.querySelector(".edit-repeat").dispatchEvent(new Event("change"));
 editForm.querySelector(".edit-every").value = "3";
-editForm.requestSubmit();
+await trusted.click(editForm.querySelector(".save"));
 check("editing changes the repeat", await waitFor(() => find("Stand-up notes")?.querySelector(".chip.repeat")?.textContent === "↻ Every 3 months"));
-find("Stand-up notes").querySelector(".edit").click();
+await trusted.click(find("Stand-up notes").querySelector(".edit"));
 await waitFor(() => !!find("Stand-up notes").querySelector(".edit-form"));
 editForm = find("Stand-up notes").querySelector(".edit-form");
 editForm.querySelector(".edit-repeat").value = "";
 editForm.querySelector(".edit-repeat").dispatchEvent(new Event("change"));
-editForm.requestSubmit();
+await trusted.click(editForm.querySelector(".save"));
 check("'Does not repeat' stops repeating", await waitFor(() =>
   !!find("Stand-up notes") && !find("Stand-up notes").querySelector(".edit-form") && !find("Stand-up notes").querySelector(".chip.repeat")));
-find("Stand-up notes").querySelector("input[type=checkbox]").click();
+await trusted.click(find("Stand-up notes").querySelector("input[type=checkbox]"));
 await waitFor(() => find("Stand-up notes")?.classList.contains("done"));
 await sleep(150);
 check("completing a non-repeating task creates nothing new", (await taskStore.all(db)).filter((t) => t.title === "Stand-up notes").length === 1);
