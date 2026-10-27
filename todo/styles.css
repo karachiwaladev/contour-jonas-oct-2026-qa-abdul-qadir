@@ -104,6 +104,9 @@ button.secondary {
 }
 
 .chip.repeat { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.chip.priority { font-weight: 600; }
+.chip.priority-high { background: var(--danger-soft); color: var(--danger); }
+.chip.priority-low { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 
 button.chip { border: 1px solid transparent; }
 button.chip[aria-pressed="true"] { background: var(--accent); color: #fff; }

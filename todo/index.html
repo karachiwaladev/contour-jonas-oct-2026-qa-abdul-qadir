@@ -27,6 +27,14 @@
         </label>
       </div>
       <div class="new-task-row extras">
+        <label class="field">
+          <span>Priority</span>
+          <select id="new-task-priority" name="priority">
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
         <span class="field repeat-field">
           <label for="new-task-every">Repeat every</label>
           <input id="new-task-every" name="every" type="number" min="1" max="99" value="1">
@@ -48,6 +56,12 @@
         <button type="button" data-status="active" aria-pressed="false">Incomplete</button>
         <button type="button" data-status="done" aria-pressed="false">Completed</button>
       </div>
+      <div id="priority-filter" class="segmented" role="group" aria-label="Priority">
+        <button type="button" data-priority="" aria-pressed="true">Any priority</button>
+        <button type="button" data-priority="high" aria-pressed="false">High</button>
+        <button type="button" data-priority="medium" aria-pressed="false">Medium</button>
+        <button type="button" data-priority="low" aria-pressed="false">Low</button>
+      </div>
       <div id="tag-filter" class="tag-filter" role="group" aria-label="Filter by tag"></div>
     </section>
 
@@ -57,6 +71,8 @@
     <p id="error" class="error" role="alert" hidden></p>
   </main>
 
+  <script src="model.js"></script>
+  <script src="store.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

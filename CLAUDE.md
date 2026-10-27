@@ -75,4 +75,4 @@ comments on the issue → waits for manual review before merging. Never destruct
 
 | Project | Path | Ticket | Summary |
 |---------|------|--------|---------|
-| todo | [todo/](todo/CLAUDE.md) | #3–#5 (issues #4, #5, #7) | Todo app with due dates, tags, filters and recurring tasks; IndexedDB storage |
+| todo | [todo/](todo/CLAUDE.md) | #3–#6 (issues #4, #5, #7, #11) | Todo app with due dates, tags, priority, filters and recurring tasks; IndexedDB storage |
