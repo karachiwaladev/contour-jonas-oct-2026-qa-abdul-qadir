@@ -11,6 +11,7 @@ function evidenceText(c) {
   const parts = [];
   if ((c.checks || []).length) parts.push(plural(c.checks.length, "check"));
   if ((c.files || []).length) parts.push(`files: ${c.files.join(", ")}`);
+  if (c.network === "local-only") parts.push("Chrome's network log shows only local requests");
   if (c.absent) parts.push(`no \`/${c.absent}/\` in the source`);
   return parts.join(" + ");
 }
