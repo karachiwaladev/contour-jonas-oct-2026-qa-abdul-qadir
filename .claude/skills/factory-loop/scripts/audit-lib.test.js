@@ -162,3 +162,30 @@ test("PR evidence: closing keywords, embedded pinned images, hidden text ignored
   assert.strictEqual(lib.prEvidence("Closes #70", 7).closes, false, "different issue");
   assert.deepStrictEqual(lib.prEvidence("see https://github.com/o/r/blob/abc1234/todo/screenshots/ticket-5-a.png", 7).images, [], "plain link isn't embedded");
 });
+
+test("failure traces are grouped by cause", () => {
+  const files = (n) => ({ screenshot: `traces/fail-${n}.png`, dom: `traces/fail-${n}.html` });
+  const del = { action: "click", tag: "button", label: "Delete" };
+  const groups = lib.groupFailures([
+    { dir: "base", traces: [
+      { n: 1, kind: "assertion", check: "delete a task", lastInputs: [del], files: files(1) },
+      { n: 2, kind: "assertion", check: "changes are persisted", lastInputs: [del], files: files(2) },
+      { n: 3, kind: "assertion", check: "empty state", lastInputs: [], files: files(3) },
+      { n: 4, kind: "console-error", message: "TypeError: x is undefined\n  at app.js:3", files: files(4) },
+      { n: 5, kind: "input-refused", message: "test threw: trusted input: another element covers the click point (div)", files: files(5) },
+    ] },
+    { dir: "mutation-AC5", mutation: { id: "AC5", code: "taskStore.remove = async () => {};\n" }, traces: [
+      { n: 1, kind: "assertion", check: "delete a task", lastInputs: [del], files: files(1) },
+      { n: 2, kind: "assertion", check: "tasks sort", lastInputs: [], files: files(2) },
+    ] },
+  ]);
+  assert.deepStrictEqual(groups.map((g) => [g.cause, g.failures.map((f) => f.check || f.message)]), [
+    ['checks failed after clicking button "Delete"', ["delete a task", "changes are persisted"]],
+    ["checks failed before any input", ["empty state"]],
+    ["console error: TypeError: x is undefined", ["TypeError: x is undefined\n  at app.js:3"]],
+    ["trusted input was refused: test threw: trusted input: another element covers the click point (div)", ["test threw: trusted input: another element covers the click point (div)"]],
+    ["AC5 broken on purpose: `taskStore.remove = async () => {};`", ["delete a task", "tasks sort"]],
+  ]);
+  assert.deepStrictEqual(groups.map((g) => g.expected), [false, false, false, false, true]);
+  assert.strictEqual(groups[4].failures[0].screenshot, "mutation-AC5/traces/fail-1.png", "trace paths are relative to the evidence root");
+});

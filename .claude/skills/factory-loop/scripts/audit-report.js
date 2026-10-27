@@ -2,6 +2,7 @@
 
 const path = require("path");
 const { consoleBySource } = require("./audit-lib");
+const { failureSection } = require("./failure-report");
 
 const esc = (s) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const ok = (b) => (b ? "✅" : "❌");
@@ -77,7 +78,7 @@ function report(f) {
     lines.push("**Treated as context, not tested. The reviewer must confirm none of these is an ask:**",
       ...f.context.map((c) => `- ⚠ "${c.quote}" (${c.reason})`), "");
   }
-  lines.push(...browserEvidence(f), ...evidenceSection(f));
+  lines.push(...browserEvidence(f), ...failureSection(f), ...evidenceSection(f));
   if (!verified) lines.push("### Problems", "", ...f.blockers.map((b) => `- ${b}`), "");
   if (f.notes.length) lines.push("### Notes", "", ...f.notes.map((n) => `- ${n}`), "");
   return lines.join("\n");

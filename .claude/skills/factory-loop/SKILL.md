@@ -238,8 +238,21 @@ It reads `<project>/tests/acceptance/ticket-<T>.json`, which you write from the 
   - IndexedDB read directly by Chrome;
   - a screencast (`base/video.html`);
   - the Chrome version and binary SHA-256;
+  - a **failure trace** for every FAIL (`traces/`, `traces.jsonl`): a screenshot, the DOM at that
+    moment, the inputs and console output just before it, and its time in the video. Use
+    `checkEqual(name, actual, expected)` in `checks.js` for comparisons, so the trace also shows
+    what was expected and what the page showed;
   - a SHA-256 manifest of all of the above. The audit rejects a pack whose files don't match it,
     or whose manifest isn't the one the run printed.
+
+  The report groups the failure traces **by cause**:
+  - failures in the fresh run (real problems) group by kind: console error, crash, refused
+    input, or a failed assertion, filed under the action just before it;
+  - failures the audit causes on purpose get one group per broken feature, showing the direct
+    hit and the knock-on failures.
+
+  `failures.html` in the evidence folder shows every group with its screenshots. When a check
+  fails, start from its group rather than its name alone.
 
   `"network": "local-only"` on a criterion checks both network logs, which is stronger than
   `absent`. Add `--evidence <dir>` to keep the packs. Locally, anyone could still rerun and

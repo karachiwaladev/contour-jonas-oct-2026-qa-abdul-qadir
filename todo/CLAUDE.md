@@ -69,7 +69,10 @@ left the machine, from pages, workers or WebSockets. On GitHub, the same audit r
 is attached to the run.
 
 The checks drive the UI with `trusted.click` and `trusted.type`, which is real input dispatched
-by Chrome, not synthetic `.click()` calls.
+by Chrome, not synthetic `.click()` calls. Comparisons use `checkEqual(name, actual, expected)`, so
+a failure's trace in the evidence pack shows both values next to its screenshot and DOM.
+[`failure-traces/README.md`](failure-traces/README.md) has every ticket's failure traces grouped by
+cause (regenerate with `node .claude/skills/factory-loop/scripts/project-failures.js --project todo --out todo/failure-traces`).
 
 `tests/checks.js` has 85 checks covering every feature above. It also tests edge cases:
 HTML in titles and tags, blank input, the empty and no-match states, persistence of
